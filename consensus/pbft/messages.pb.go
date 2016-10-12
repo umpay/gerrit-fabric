@@ -64,9 +64,10 @@ type Message_RequestBatch struct {
 type Message_PrePrepare struct {
 	PrePrepare *PrePrepare `protobuf:"bytes,2,opt,name=pre_prepare,oneof"`
 }
+/*
 type Message_Prepare struct {
 	Prepare *Prepare `protobuf:"bytes,3,opt,name=prepare,oneof"`
-}
+}*/
 type Message_Commit struct {
 	Commit *Commit `protobuf:"bytes,4,opt,name=commit,oneof"`
 }
@@ -88,7 +89,7 @@ type Message_ReturnRequestBatch struct {
 
 func (*Message_RequestBatch) isMessage_Payload()       {}
 func (*Message_PrePrepare) isMessage_Payload()         {}
-func (*Message_Prepare) isMessage_Payload()            {}
+//func (*Message_Prepare) isMessage_Payload()            {}
 func (*Message_Commit) isMessage_Payload()             {}
 func (*Message_Checkpoint) isMessage_Payload()         {}
 func (*Message_ViewChange) isMessage_Payload()         {}
@@ -116,14 +117,14 @@ func (m *Message) GetPrePrepare() *PrePrepare {
 	}
 	return nil
 }
-
+/*
 func (m *Message) GetPrepare() *Prepare {
 	if x, ok := m.GetPayload().(*Message_Prepare); ok {
 		return x.Prepare
 	}
 	return nil
 }
-
+*/
 func (m *Message) GetCommit() *Commit {
 	if x, ok := m.GetPayload().(*Message_Commit); ok {
 		return x.Commit
@@ -171,7 +172,7 @@ func (*Message) XXX_OneofFuncs() (func(msg proto.Message, b *proto.Buffer) error
 	return _Message_OneofMarshaler, _Message_OneofUnmarshaler, []interface{}{
 		(*Message_RequestBatch)(nil),
 		(*Message_PrePrepare)(nil),
-		(*Message_Prepare)(nil),
+		/*(*Message_Prepare)(nil),*/
 		(*Message_Commit)(nil),
 		(*Message_Checkpoint)(nil),
 		(*Message_ViewChange)(nil),
@@ -195,38 +196,38 @@ func _Message_OneofMarshaler(msg proto.Message, b *proto.Buffer) error {
 		if err := b.EncodeMessage(x.PrePrepare); err != nil {
 			return err
 		}
-	case *Message_Prepare:
+	/*case *Message_Prepare:
 		b.EncodeVarint(3<<3 | proto.WireBytes)
 		if err := b.EncodeMessage(x.Prepare); err != nil {
 			return err
-		}
+		}*/
 	case *Message_Commit:
-		b.EncodeVarint(4<<3 | proto.WireBytes)
+		b.EncodeVarint(3<<3 | proto.WireBytes)
 		if err := b.EncodeMessage(x.Commit); err != nil {
 			return err
 		}
 	case *Message_Checkpoint:
-		b.EncodeVarint(5<<3 | proto.WireBytes)
+		b.EncodeVarint(4<<3 | proto.WireBytes)
 		if err := b.EncodeMessage(x.Checkpoint); err != nil {
 			return err
 		}
 	case *Message_ViewChange:
-		b.EncodeVarint(6<<3 | proto.WireBytes)
+		b.EncodeVarint(5<<3 | proto.WireBytes)
 		if err := b.EncodeMessage(x.ViewChange); err != nil {
 			return err
 		}
 	case *Message_NewView:
-		b.EncodeVarint(7<<3 | proto.WireBytes)
+		b.EncodeVarint(6<<3 | proto.WireBytes)
 		if err := b.EncodeMessage(x.NewView); err != nil {
 			return err
 		}
 	case *Message_FetchRequestBatch:
-		b.EncodeVarint(8<<3 | proto.WireBytes)
+		b.EncodeVarint(7<<3 | proto.WireBytes)
 		if err := b.EncodeMessage(x.FetchRequestBatch); err != nil {
 			return err
 		}
 	case *Message_ReturnRequestBatch:
-		b.EncodeVarint(9<<3 | proto.WireBytes)
+		b.EncodeVarint(8<<3 | proto.WireBytes)
 		if err := b.EncodeMessage(x.ReturnRequestBatch); err != nil {
 			return err
 		}
@@ -256,15 +257,15 @@ func _Message_OneofUnmarshaler(msg proto.Message, tag, wire int, b *proto.Buffer
 		err := b.DecodeMessage(msg)
 		m.Payload = &Message_PrePrepare{msg}
 		return true, err
-	case 3: // payload.prepare
+	/*case 3: // payload.prepare
 		if wire != proto.WireBytes {
 			return true, proto.ErrInternalBadWireType
 		}
 		msg := new(Prepare)
 		err := b.DecodeMessage(msg)
 		m.Payload = &Message_Prepare{msg}
-		return true, err
-	case 4: // payload.commit
+		return true, err*/
+	case 3: // payload.commit
 		if wire != proto.WireBytes {
 			return true, proto.ErrInternalBadWireType
 		}
@@ -272,7 +273,7 @@ func _Message_OneofUnmarshaler(msg proto.Message, tag, wire int, b *proto.Buffer
 		err := b.DecodeMessage(msg)
 		m.Payload = &Message_Commit{msg}
 		return true, err
-	case 5: // payload.checkpoint
+	case 4: // payload.checkpoint
 		if wire != proto.WireBytes {
 			return true, proto.ErrInternalBadWireType
 		}
@@ -280,7 +281,7 @@ func _Message_OneofUnmarshaler(msg proto.Message, tag, wire int, b *proto.Buffer
 		err := b.DecodeMessage(msg)
 		m.Payload = &Message_Checkpoint{msg}
 		return true, err
-	case 6: // payload.view_change
+	case 5: // payload.view_change
 		if wire != proto.WireBytes {
 			return true, proto.ErrInternalBadWireType
 		}
@@ -288,7 +289,7 @@ func _Message_OneofUnmarshaler(msg proto.Message, tag, wire int, b *proto.Buffer
 		err := b.DecodeMessage(msg)
 		m.Payload = &Message_ViewChange{msg}
 		return true, err
-	case 7: // payload.new_view
+	case 6: // payload.new_view
 		if wire != proto.WireBytes {
 			return true, proto.ErrInternalBadWireType
 		}
@@ -296,7 +297,7 @@ func _Message_OneofUnmarshaler(msg proto.Message, tag, wire int, b *proto.Buffer
 		err := b.DecodeMessage(msg)
 		m.Payload = &Message_NewView{msg}
 		return true, err
-	case 8: // payload.fetch_request_batch
+	case 7: // payload.fetch_request_batch
 		if wire != proto.WireBytes {
 			return true, proto.ErrInternalBadWireType
 		}
@@ -304,7 +305,7 @@ func _Message_OneofUnmarshaler(msg proto.Message, tag, wire int, b *proto.Buffer
 		err := b.DecodeMessage(msg)
 		m.Payload = &Message_FetchRequestBatch{msg}
 		return true, err
-	case 9: // payload.return_request_batch
+	case 8: // payload.return_request_batch
 		if wire != proto.WireBytes {
 			return true, proto.ErrInternalBadWireType
 		}
@@ -353,7 +354,7 @@ func (m *PrePrepare) GetRequestBatch() *RequestBatch {
 	}
 	return nil
 }
-
+/*
 type Prepare struct {
 	View           uint64 `protobuf:"varint,1,opt,name=view" json:"view,omitempty"`
 	SequenceNumber uint64 `protobuf:"varint,2,opt,name=sequence_number" json:"sequence_number,omitempty"`
@@ -364,7 +365,7 @@ type Prepare struct {
 func (m *Prepare) Reset()         { *m = Prepare{} }
 func (m *Prepare) String() string { return proto.CompactTextString(m) }
 func (*Prepare) ProtoMessage()    {}
-
+*/
 type Commit struct {
 	View           uint64 `protobuf:"varint,1,opt,name=view" json:"view,omitempty"`
 	SequenceNumber uint64 `protobuf:"varint,2,opt,name=sequence_number" json:"sequence_number,omitempty"`
@@ -399,10 +400,9 @@ type ViewChange struct {
 	View      uint64           `protobuf:"varint,1,opt,name=view" json:"view,omitempty"`
 	H         uint64           `protobuf:"varint,2,opt,name=h" json:"h,omitempty"`
 	Cset      []*ViewChange_C  `protobuf:"bytes,3,rep,name=cset" json:"cset,omitempty"`
-	Pset      []*ViewChange_PQ `protobuf:"bytes,4,rep,name=pset" json:"pset,omitempty"`
-	Qset      []*ViewChange_PQ `protobuf:"bytes,5,rep,name=qset" json:"qset,omitempty"`
-	ReplicaId uint64           `protobuf:"varint,6,opt,name=replica_id" json:"replica_id,omitempty"`
-	Signature []byte           `protobuf:"bytes,7,opt,name=signature,proto3" json:"signature,omitempty"`
+	Qset      []*ViewChange_PQ `protobuf:"bytes,4,rep,name=qset" json:"qset,omitempty"`
+	ReplicaId uint64           `protobuf:"varint,5,opt,name=replica_id" json:"replica_id,omitempty"`
+	Signature []byte           `protobuf:"bytes,6,opt,name=signature,proto3" json:"signature,omitempty"`
 }
 
 func (m *ViewChange) Reset()         { *m = ViewChange{} }
@@ -416,12 +416,13 @@ func (m *ViewChange) GetCset() []*ViewChange_C {
 	return nil
 }
 
+/*
 func (m *ViewChange) GetPset() []*ViewChange_PQ {
 	if m != nil {
 		return m.Pset
 	}
 	return nil
-}
+}*/
 
 func (m *ViewChange) GetQset() []*ViewChange_PQ {
 	if m != nil {

@@ -138,7 +138,7 @@ type pbftCore struct {
 	seqNo         uint64            // PBFT "n", strictly monotonic increasing sequence number
 	view          uint64            // current view
 	chkpts        map[uint64]string // state checkpoints; map lastExec to global hash
-	pset          map[uint64]*ViewChange_PQ
+	//pset          map[uint64]*ViewChange_PQ
 	qset          map[qidx]*ViewChange_PQ
 
 	skipInProgress    bool               // Set when we have detected a fall behind scenario until we pick a new starting point
@@ -186,8 +186,8 @@ type msgID struct { // our index through certStore
 type msgCert struct {
 	digest      string
 	prePrepare  *PrePrepare
-	sentPrepare bool
-	prepare     []*Prepare
+	//sentPrepare bool
+	//prepare     []*Prepare
 	sentCommit  bool
 	commit      []*Commit
 }
@@ -213,12 +213,13 @@ func (a sortableUint64Slice) Less(i, j int) bool {
 // constructors
 // =============================================================================
 
+
 func newPbftCore(id uint64, config *viper.Viper, consumer innerStack, etf events.TimerFactory) *pbftCore {
 	var err error
 	instance := &pbftCore{}
 	instance.id = id
 	instance.consumer = consumer
-
+	logger.Errorf("---newPbftCore%s",instance.printInfo())
 	instance.newViewTimer = etf.CreateTimer()
 	instance.vcResendTimer = etf.CreateTimer()
 	instance.nullRequestTimer = etf.CreateTimer()
@@ -291,7 +292,7 @@ func newPbftCore(id uint64, config *viper.Viper, consumer innerStack, etf events
 	instance.checkpointStore = make(map[Checkpoint]bool)
 	instance.chkpts = make(map[uint64]string)
 	instance.viewChangeStore = make(map[vcidx]*ViewChange)
-	instance.pset = make(map[uint64]*ViewChange_PQ)
+	//instance.pset = make(map[uint64]*ViewChange_PQ)
 	instance.qset = make(map[qidx]*ViewChange_PQ)
 	instance.newViewStore = make(map[uint64]*NewView)
 
@@ -312,6 +313,16 @@ func newPbftCore(id uint64, config *viper.Viper, consumer innerStack, etf events
 	return instance
 }
 
+func (instance *pbftCore) printInfo() string{
+	var curEx uint64
+	if instance.currentExec == nil {
+		curEx  = 0
+	}else {
+		curEx = *instance.currentExec
+	}
+	s:= fmt.Sprintf("--id:%d h:%d seqNo:%d view:%d curEx:%d laEx:%d actView:%t timAct:%t---",instance.id,instance.h,instance.seqNo,instance.view,curEx,instance.lastExec,instance.activeView,instance.timerActive)
+	return s
+}
 // close tears down resources opened by newPbftCore
 func (instance *pbftCore) close() {
 	instance.newViewTimer.Halt()
@@ -324,6 +335,7 @@ func (instance *pbftCore) ProcessEvent(e events.Event) events.Event {
 	logger.Debugf("Replica %d processing event", instance.id)
 	switch et := e.(type) {
 	case viewChangeTimerEvent:
+		logger.Errorf("---viewChangeTimerEvent01%s",instance.printInfo())
 		logger.Infof("Replica %d view change timer expired, sending view change: %s", instance.id, instance.newViewTimerReason)
 		instance.timerActive = false
 		instance.sendViewChange()
@@ -338,24 +350,33 @@ func (instance *pbftCore) ProcessEvent(e events.Event) events.Event {
 		}
 		return next
 	case *RequestBatch:
+		logger.Errorf("---RequestBatch%s",instance.printInfo())
 		err = instance.recvRequestBatch(et)
 	case *PrePrepare:
+		logger.Errorf("---PrePrepare01%s",instance.printInfo())
 		err = instance.recvPrePrepare(et)
-	case *Prepare:
-		err = instance.recvPrepare(et)
+	//case *Prepare:
+	//	err = instance.recvPrepare(et)
 	case *Commit:
+		logger.Errorf("---recvCommit01%s",instance.printInfo())
 		err = instance.recvCommit(et)
 	case *Checkpoint:
+		logger.Errorf("---recvCheckpoint01%s",instance.printInfo())
 		return instance.recvCheckpoint(et)
 	case *ViewChange:
+		logger.Errorf("---recvViewChange01%s",instance.printInfo())
 		return instance.recvViewChange(et)
 	case *NewView:
+		logger.Errorf("---NewView01%s",instance.printInfo())
 		return instance.recvNewView(et)
 	case *FetchRequestBatch:
+		logger.Errorf("---FetchRequestBatch01%s",instance.printInfo())
 		err = instance.recvFetchRequestBatch(et)
 	case returnRequestBatchEvent:
+		logger.Errorf("---recvReturnRequestBatch01%s",instance.printInfo())
 		return instance.recvReturnRequestBatch(et)
 	case stateUpdatedEvent:
+		logger.Errorf("---stateUpdatedEvent01%s",instance.printInfo())
 		update := et.chkpt
 		instance.stateTransferring = false
 		// If state transfer did not complete successfully, or if it did not reach our low watermark, do it again
@@ -383,6 +404,7 @@ func (instance *pbftCore) ProcessEvent(e events.Event) events.Event {
 		instance.consumer.validateState()
 		instance.executeOutstanding()
 	case execDoneEvent:
+		logger.Errorf("---execDoneEvent01%s",instance.printInfo())
 		instance.execDoneSync()
 		if instance.skipInProgress {
 			instance.retryStateTransfer(nil)
@@ -394,6 +416,7 @@ func (instance *pbftCore) ProcessEvent(e events.Event) events.Event {
 	case workEvent:
 		et() // Used to allow the caller to steal use of the main thread, to be removed
 	case viewChangeQuorumEvent:
+		logger.Errorf("---viewChangeQuorumEvent01%s",instance.printInfo())
 		logger.Debugf("Replica %d received view change quorum, processing new view", instance.id)
 		if instance.primary(instance.view) == instance.id {
 			return instance.sendNewView()
@@ -402,6 +425,7 @@ func (instance *pbftCore) ProcessEvent(e events.Event) events.Event {
 	case viewChangedEvent:
 		// No-op, processed by plugins if needed
 	case viewChangeResendTimerEvent:
+		logger.Errorf("---viewChangeResendTimerEvent%s",instance.printInfo())
 		if instance.activeView {
 			logger.Warningf("Replica %d had its view change resend timer expire but it's in an active view, this is benign but may indicate a bug", instance.id)
 			return nil
@@ -491,8 +515,12 @@ func (instance *pbftCore) prePrepared(digest string, v uint64, n uint64) bool {
 		instance.id, v, n)
 	return false
 }
-
+//Abandoned
+/*
 func (instance *pbftCore) prepared(digest string, v uint64, n uint64) bool {
+	logger.Debugf("------prepared   error-----------------------")
+	return false
+
 	if !instance.prePrepared(digest, v, n) {
 		return false
 	}
@@ -518,11 +546,16 @@ func (instance *pbftCore) prepared(digest string, v uint64, n uint64) bool {
 
 	return quorum >= instance.intersectionQuorum()-1
 }
-
+*/
 func (instance *pbftCore) committed(digest string, v uint64, n uint64) bool {
-	if !instance.prepared(digest, v, n) {
+	if !instance.prePrepared(digest, v, n) {
 		return false
 	}
+
+    /*
+	if !instance.prepared(digest, v, n) {
+		return false
+	}*/
 
 	quorum := 0
 	cert := instance.certStore[msgID{v, n}]
@@ -571,11 +604,6 @@ func (instance *pbftCore) recvMsg(msg *Message, senderID uint64) (interface{}, e
 			return nil, fmt.Errorf("Sender ID included in pre-prepare message (%v) doesn't match ID corresponding to the receiving stream (%v)", preprep.ReplicaId, senderID)
 		}
 		return preprep, nil
-	} else if prep := msg.GetPrepare(); prep != nil {
-		if senderID != prep.ReplicaId {
-			return nil, fmt.Errorf("Sender ID included in prepare message (%v) doesn't match ID corresponding to the receiving stream (%v)", prep.ReplicaId, senderID)
-		}
-		return prep, nil
 	} else if commit := msg.GetCommit(); commit != nil {
 		if senderID != commit.ReplicaId {
 			return nil, fmt.Errorf("Sender ID included in commit message (%v) doesn't match ID corresponding to the receiving stream (%v)", commit.ReplicaId, senderID)
@@ -755,6 +783,14 @@ func (instance *pbftCore) recvPrePrepare(preprep *PrePrepare) error {
 	instance.softStartTimer(instance.requestTimeout, fmt.Sprintf("new pre-prepare for request batch %s", preprep.BatchDigest))
 	instance.nullRequestTimer.Stop()
 
+	if instance.primary(instance.view) != instance.id && instance.prePrepared(preprep.BatchDigest, preprep.View, preprep.SequenceNumber) {
+		logger.Debugf("Backup %d broadcasting prepare for view=%d/seqNo=%d", instance.id, preprep.View, preprep.SequenceNumber)
+		
+		instance.persistQSet()
+		return instance.maybeSendCommit(preprep.BatchDigest, preprep.View, preprep.SequenceNumber)
+	}
+
+    /*
 	if instance.primary(instance.view) != instance.id && instance.prePrepared(preprep.BatchDigest, preprep.View, preprep.SequenceNumber) && !cert.sentPrepare {
 		logger.Debugf("Backup %d broadcasting prepare for view=%d/seqNo=%d", instance.id, preprep.View, preprep.SequenceNumber)
 		prep := &Prepare{
@@ -768,10 +804,13 @@ func (instance *pbftCore) recvPrePrepare(preprep *PrePrepare) error {
 		instance.recvPrepare(prep)
 		return instance.innerBroadcast(&Message{Payload: &Message_Prepare{Prepare: prep}})
 	}
+	*/
 
 	return nil
 }
 
+//Abandoned
+/*
 func (instance *pbftCore) recvPrepare(prep *Prepare) error {
 	logger.Debugf("Replica %d received prepare from replica %d for view=%d/seqNo=%d",
 		instance.id, prep.ReplicaId, prep.View, prep.SequenceNumber)
@@ -804,11 +843,12 @@ func (instance *pbftCore) recvPrepare(prep *Prepare) error {
 
 	return instance.maybeSendCommit(prep.BatchDigest, prep.View, prep.SequenceNumber)
 }
-
+*/
 //
 func (instance *pbftCore) maybeSendCommit(digest string, v uint64, n uint64) error {
 	cert := instance.getCert(v, n)
-	if instance.prepared(digest, v, n) && !cert.sentCommit {
+	//if instance.prepared(digest, v, n) && !cert.sentCommit {
+	if instance.prePrepared(digest, v, n) && !cert.sentCommit {
 		logger.Debugf("Replica %d broadcasting commit for view=%d/seqNo=%d",
 			instance.id, v, n)
 		commit := &Commit{
@@ -1029,11 +1069,12 @@ func (instance *pbftCore) moveWatermarks(n uint64) {
 		}
 	}
 
+	/*
 	for n := range instance.pset {
 		if n <= h {
 			delete(instance.pset, n)
 		}
-	}
+	}*/
 
 	for idx := range instance.qset {
 		if idx.n <= h {

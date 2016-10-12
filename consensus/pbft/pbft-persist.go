@@ -32,7 +32,7 @@ func (instance *pbftCore) persistQSet() {
 
 	instance.persistPQSet("qset", qset)
 }
-
+/*
 func (instance *pbftCore) persistPSet() {
 	var pset []*ViewChange_PQ
 
@@ -42,7 +42,7 @@ func (instance *pbftCore) persistPSet() {
 
 	instance.persistPQSet("pset", pset)
 }
-
+*/
 func (instance *pbftCore) persistPQSet(key string, set []*ViewChange_PQ) {
 	raw, err := proto.Marshal(&PQset{set})
 	if err != nil {
@@ -120,14 +120,14 @@ func (instance *pbftCore) restoreState() {
 			}
 		}
 	}
-
+	/*
 	set := instance.restorePQSet("pset")
 	for _, e := range set {
 		instance.pset[e.SequenceNumber] = e
 	}
 	updateSeqView(set)
-
-	set = instance.restorePQSet("qset")
+	*/
+	set := instance.restorePQSet("qset")
 	for _, e := range set {
 		instance.qset[qidx{e.BatchDigest, e.SequenceNumber}] = e
 	}
@@ -171,8 +171,8 @@ func (instance *pbftCore) restoreState() {
 
 	instance.restoreLastSeqNo()
 
-	logger.Infof("Replica %d restored state: view: %d, seqNo: %d, pset: %d, qset: %d, reqBatches: %d, chkpts: %d",
-		instance.id, instance.view, instance.seqNo, len(instance.pset), len(instance.qset), len(instance.reqBatchStore), len(instance.chkpts))
+	logger.Infof("Replica %d restored state: view: %d, seqNo: %d, qset: %d, reqBatches: %d, chkpts: %d",
+		instance.id, instance.view, instance.seqNo, len(instance.qset), len(instance.reqBatchStore), len(instance.chkpts))
 }
 
 func (instance *pbftCore) restoreLastSeqNo() {

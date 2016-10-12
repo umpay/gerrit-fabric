@@ -28,14 +28,21 @@ import (
 type viewChangeQuorumEvent struct{}
 
 func (instance *pbftCore) correctViewChange(vc *ViewChange) bool {
-	for _, p := range append(vc.Pset, vc.Qset...) {
-		if !(p.View < vc.View && p.SequenceNumber > vc.H && p.SequenceNumber <= vc.H+instance.L) {
-			logger.Debugf("Replica %d invalid p entry in view-change: vc(v:%d h:%d) p(v:%d n:%d)",
-				instance.id, vc.View, vc.H, p.View, p.SequenceNumber)
+	// for _, p := range append(vc.Pset, vc.Qset...) {
+	// 	if !(p.View < vc.View && p.SequenceNumber > vc.H && p.SequenceNumber <= vc.H+instance.L) {
+	// 		logger.Debugf("Replica %d invalid p entry in view-change: vc(v:%d h:%d) p(v:%d n:%d)",
+	// 			instance.id, vc.View, vc.H, p.View, p.SequenceNumber)
+	// 		return false
+	// 	}
+	// }
+
+	for _, q := range vc.Qset {
+		if !(q.View < vc.View && q.SequenceNumber > vc.H && q.SequenceNumber <= vc.H+instance.L) {
+			logger.Debugf("Replica %d invalid q entry in view-change: vc(v:%d h:%d) q(v:%d n:%d)",
+				instance.id, vc.View, vc.H, q.View, q.SequenceNumber)
 			return false
 		}
 	}
-
 	for _, c := range vc.Cset {
 		// PBFT: the paper says c.n > vc.h
 		if !(c.SequenceNumber >= vc.H && c.SequenceNumber <= vc.H+instance.L) {
@@ -48,41 +55,41 @@ func (instance *pbftCore) correctViewChange(vc *ViewChange) bool {
 	return true
 }
 
-func (instance *pbftCore) calcPSet() map[uint64]*ViewChange_PQ {
-	pset := make(map[uint64]*ViewChange_PQ)
+// func (instance *pbftCore) calcPSet() map[uint64]*ViewChange_PQ {
+// 	pset := make(map[uint64]*ViewChange_PQ)
 
-	for n, p := range instance.pset {
-		pset[n] = p
-	}
+// 	for n, p := range instance.pset {
+// 		pset[n] = p
+// 	}
 
-	// P set: requests that have prepared here
-	//
-	// "<n,d,v> has a prepared certificate, and no request
-	// prepared in a later view with the same number"
+// 	// P set: requests that have prepared here
+// 	//
+// 	// "<n,d,v> has a prepared certificate, and no request
+// 	// prepared in a later view with the same number"
 
-	for idx, cert := range instance.certStore {
-		if cert.prePrepare == nil {
-			continue
-		}
+// 	for idx, cert := range instance.certStore {
+// 		if cert.prePrepare == nil {
+// 			continue
+// 		}
 
-		digest := cert.digest
-		if !instance.prepared(digest, idx.v, idx.n) {
-			continue
-		}
+// 		digest := cert.digest
+// 		if !instance.prepared(digest, idx.v, idx.n) {
+// 			continue
+// 		}
 
-		if p, ok := pset[idx.n]; ok && p.View > idx.v {
-			continue
-		}
+// 		if p, ok := pset[idx.n]; ok && p.View > idx.v {
+// 			continue
+// 		}
 
-		pset[idx.n] = &ViewChange_PQ{
-			SequenceNumber: idx.n,
-			BatchDigest:    digest,
-			View:           idx.v,
-		}
-	}
+// 		pset[idx.n] = &ViewChange_PQ{
+// 			SequenceNumber: idx.n,
+// 			BatchDigest:    digest,
+// 			View:           idx.v,
+// 		}
+// 	}
 
-	return pset
-}
+// 	return pset
+// }
 
 func (instance *pbftCore) calcQSet() map[qidx]*ViewChange_PQ {
 	qset := make(map[qidx]*ViewChange_PQ)
@@ -129,7 +136,7 @@ func (instance *pbftCore) sendViewChange() events.Event {
 	instance.view++
 	instance.activeView = false
 
-	instance.pset = instance.calcPSet()
+	//instance.pset = instance.calcPSet()
 	instance.qset = instance.calcQSet()
 
 	// clear old messages
@@ -157,12 +164,12 @@ func (instance *pbftCore) sendViewChange() events.Event {
 		})
 	}
 
-	for _, p := range instance.pset {
-		if p.SequenceNumber < instance.h {
-			logger.Errorf("BUG! Replica %d should not have anything in our pset less than h, found %+v", instance.id, p)
-		}
-		vc.Pset = append(vc.Pset, p)
-	}
+	// for _, p := range instance.pset {
+	// 	if p.SequenceNumber < instance.h {
+	// 		logger.Errorf("BUG! Replica %d should not have anything in our pset less than h, found %+v", instance.id, p)
+	// 	}
+	// 	vc.Pset = append(vc.Pset, p)
+	// }
 
 	for _, q := range instance.qset {
 		if q.SequenceNumber < instance.h {
@@ -173,8 +180,11 @@ func (instance *pbftCore) sendViewChange() events.Event {
 
 	instance.sign(vc)
 
-	logger.Infof("Replica %d sending view-change, v:%d, h:%d, |C|:%d, |P|:%d, |Q|:%d",
-		instance.id, vc.View, vc.H, len(vc.Cset), len(vc.Pset), len(vc.Qset))
+	// logger.Infof("Replica %d sending view-change, v:%d, h:%d, |C|:%d, |P|:%d, |Q|:%d",
+	// 	instance.id, vc.View, vc.H, len(vc.Cset), len(vc.Pset), len(vc.Qset))
+
+	logger.Infof("Replica %d sending view-change, v:%d, h:%d, |C|:%d, |Q|:%d",
+		instance.id, vc.View, vc.H, len(vc.Cset), len(vc.Qset))
 
 	instance.innerBroadcast(&Message{Payload: &Message_ViewChange{ViewChange: vc}})
 
@@ -184,8 +194,11 @@ func (instance *pbftCore) sendViewChange() events.Event {
 }
 
 func (instance *pbftCore) recvViewChange(vc *ViewChange) events.Event {
-	logger.Infof("Replica %d received view-change from replica %d, v:%d, h:%d, |C|:%d, |P|:%d, |Q|:%d",
-		instance.id, vc.ReplicaId, vc.View, vc.H, len(vc.Cset), len(vc.Pset), len(vc.Qset))
+	// logger.Infof("Replica %d received view-change from replica %d, v:%d, h:%d, |C|:%d, |P|:%d, |Q|:%d",
+	// 	instance.id, vc.ReplicaId, vc.View, vc.H, len(vc.Cset), len(vc.Pset), len(vc.Qset))
+
+	logger.Infof("Replica %d received view-change from replica %d, v:%d, h:%d, |C|:%d, |Q|:%d",
+		instance.id, vc.ReplicaId, vc.View, vc.H, len(vc.Cset), len(vc.Qset))
 
 	if err := instance.verify(vc); err != nil {
 		logger.Warningf("Replica %d found incorrect signature in view-change message: %s", instance.id, err)
@@ -254,6 +267,29 @@ func (instance *pbftCore) recvViewChange(vc *ViewChange) events.Event {
 	return nil
 }
 
+func (instance *pbftCore) showMsgList(funcName string,seqNo uint64,vset []*ViewChange,msgList map[uint64]string){
+	//logger.Errorf("---funcName:%s",funcName)
+	var res string
+	res = fmt.Sprintf("-------------vset------------------\n----funcName:%s  seqNum:%d vsetSize:%d \n",funcName,seqNo,len(vset))
+	for i,em :=range vset{
+		res += fmt.Sprintf("----index:%d  view:%d  h:%d ReplicaId:%d  CsetSize:%d  QsetSize:%d\n",i,em.View,em.H,em.ReplicaId,len(em.Cset),len(em.Qset))
+		for ic,vcc:= range em.Cset{
+			res += fmt.Sprintf("---RId:%d--%d--Cset--index:%d  seqNo:%d  id:%s\n",instance.id,i,ic,vcc.SequenceNumber,vcc.Id)
+		}
+		for ic,qcc:= range em.Qset{
+			res += fmt.Sprintf("---RId:%d--%d--Qset--index:%d  seqNo:%d view:%d Bhash:%s\n",instance.id,i,ic,qcc.SequenceNumber,qcc.View,qcc.BatchDigest)
+		}
+	}
+	res +=fmt.Sprintf("------------msgList--id:%d-----  msgSize:%d \n",instance.id,len(msgList))
+	var index int
+	index =0
+	for k,v:= range msgList{
+		res += fmt.Sprintf("-----RId:%d  ID:%d key:%d hash:%s\n",instance.id,index,k,v)
+		index +=1
+	}
+	logger.Errorf("\n--------showMsgList------ReplicaId：%d--------\n%s\n",instance.id,res)
+}
+
 func (instance *pbftCore) sendNewView() events.Event {
 
 	if _, ok := instance.newViewStore[instance.view]; ok {
@@ -270,6 +306,7 @@ func (instance *pbftCore) sendNewView() events.Event {
 	}
 
 	msgList := instance.assignSequenceNumbers(vset, cp.SequenceNumber)
+	instance.showMsgList("sendNewView",cp.SequenceNumber,vset,msgList)
 	if msgList == nil {
 		logger.Infof("Replica %d could not assign sequence numbers for new view", instance.id)
 		return nil
@@ -383,6 +420,7 @@ func (instance *pbftCore) processNewView() events.Event {
 	}
 
 	msgList := instance.assignSequenceNumbers(nv.Vset, cp.SequenceNumber)
+	instance.showMsgList("processNewView",cp.SequenceNumber,nv.Vset,msgList)
 	if msgList == nil {
 		logger.Warningf("Replica %d could not assign sequence numbers: %+v",
 			instance.id, instance.viewChangeStore)
@@ -493,18 +531,21 @@ func (instance *pbftCore) processNewView2(nv *NewView) events.Event {
 
 	if instance.primary(instance.view) != instance.id {
 		for n, d := range nv.Xset {
-			prep := &Prepare{
+			commit := &Commit{
 				View:           instance.view,
 				SequenceNumber: n,
 				BatchDigest:    d,
 				ReplicaId:      instance.id,
 			}
+			// cert.sentCommit = true
+			// instance.recvCommit(commit)
+			// return instance.innerBroadcast(&Message{&Message_Commit{commit}})
 			if n > instance.h {
 				cert := instance.getCert(instance.view, n)
-				cert.sentPrepare = true
-				instance.recvPrepare(prep)
+				cert.sentCommit = true
+				instance.recvCommit(commit)
 			}
-			instance.innerBroadcast(&Message{Payload: &Message_Prepare{Prepare: prep}})
+			instance.innerBroadcast(&Message{&Message_Commit{commit}})
 		}
 	} else {
 		logger.Debugf("Replica %d is now primary, attempting to resubmit requests", instance.id)
@@ -578,6 +619,95 @@ func (instance *pbftCore) selectInitialCheckpoint(vset []*ViewChange) (checkpoin
 	return
 }
 
+// func (instance *pbftCore) assignSequenceNumbers(vset []*ViewChange, h uint64) (msgList map[uint64]string) {
+// 	msgList = make(map[uint64]string)
+
+// 	maxN := h + 1
+
+// 	// "for all n such that h < n <= h + L"
+// nLoop:
+// 	for n := h + 1; n <= h+instance.L; n++ {
+// 		// "∃m ∈ S..."
+// 		for _, m := range vset {
+// 			// "...with <n,d,v> ∈ m.P"
+// 			for _, em := range m.Pset {
+// 				quorum := 0
+// 				// "A1. ∃2f+1 messages m' ∈ S"
+// 			mpLoop:
+// 				for _, mp := range vset {
+// 					if mp.H >= n {
+// 						continue
+// 					}
+// 					// "∀<n,d',v'> ∈ m'.P"
+// 					for _, emp := range mp.Pset {
+// 						if n == emp.SequenceNumber && !(emp.View < em.View || (emp.View == em.View && emp.BatchDigest == em.BatchDigest)) {
+// 							continue mpLoop
+// 						}
+// 					}
+// 					quorum++
+// 				}
+
+// 				if quorum < instance.intersectionQuorum() {
+// 					continue
+// 				}
+
+// 				quorum = 0
+// 				// "A2. ∃f+1 messages m' ∈ S"
+// 				for _, mp := range vset {
+// 					// "∃<n,d',v'> ∈ m'.Q"
+// 					for _, emp := range mp.Qset {
+// 						if n == emp.SequenceNumber && emp.View >= em.View && emp.BatchDigest == em.BatchDigest {
+// 							quorum++
+// 						}
+// 					}
+// 				}
+
+// 				if quorum < instance.f+1 {
+// 					continue
+// 				}
+
+// 				// "then select the request with digest d for number n"
+// 				msgList[n] = em.BatchDigest
+// 				maxN = n
+
+// 				continue nLoop
+// 			}
+// 		}
+
+// 		quorum := 0
+// 		// "else if ∃2f+1 messages m ∈ S"
+// 	nullLoop:
+// 		for _, m := range vset {
+// 			// "m.P has no entry"
+// 			for _, em := range m.Pset {
+// 				if em.SequenceNumber == n {
+// 					continue nullLoop
+// 				}
+// 			}
+// 			quorum++
+// 		}
+
+// 		if quorum >= instance.intersectionQuorum() {
+// 			// "then select the null request for number n"
+// 			msgList[n] = ""
+
+// 			continue nLoop
+// 		}
+
+// 		logger.Warningf("Replica %d could not assign value to contents of seqNo %d, found only %d missing P entries", instance.id, n, quorum)
+// 		return nil
+// 	}
+
+// 	// prune top null requests
+// 	for n, msg := range msgList {
+// 		if n > maxN && msg == "" {
+// 			delete(msgList, n)
+// 		}
+// 	}
+
+// 	return
+// }
+
 func (instance *pbftCore) assignSequenceNumbers(vset []*ViewChange, h uint64) (msgList map[uint64]string) {
 	msgList = make(map[uint64]string)
 
@@ -587,30 +717,34 @@ func (instance *pbftCore) assignSequenceNumbers(vset []*ViewChange, h uint64) (m
 nLoop:
 	for n := h + 1; n <= h+instance.L; n++ {
 		// "∃m ∈ S..."
+		// 遍历vset
 		for _, m := range vset {
 			// "...with <n,d,v> ∈ m.P"
-			for _, em := range m.Pset {
+			//遍历每一个ViewChange中的Qset
+			for _, em := range m.Qset {
 				quorum := 0
 				// "A1. ∃2f+1 messages m' ∈ S"
-			mpLoop:
-				for _, mp := range vset {
-					if mp.H >= n {
-						continue
-					}
-					// "∀<n,d',v'> ∈ m'.P"
-					for _, emp := range mp.Pset {
-						if n == emp.SequenceNumber && !(emp.View < em.View || (emp.View == em.View && emp.BatchDigest == em.BatchDigest)) {
-							continue mpLoop
-						}
-					}
-					quorum++
-				}
+				// 存在2f+1个消息
+				// mpLoop:
+				// 	for _, mp := range vset {
+				// 		if mp.H >= n {
+				// 			continue
+				// 		}
+				// 		// "∀<n,d',v'> ∈ m'.P"
+				// 		// 所有
+				// 		for _, emp := range mp.Pset {
+				// 			if n == emp.SequenceNumber && !(emp.View < em.View || (emp.View == em.View && emp.BatchDigest == em.BatchDigest)) {
+				// 				continue mpLoop
+				// 			}
+				// 		}
+				// 		quorum++
+				// 	}
 
-				if quorum < instance.intersectionQuorum() {
-					continue
-				}
+				// 	if quorum < instance.intersectionQuorum() {
+				// 		continue
+				// 	}
 
-				quorum = 0
+				// 	quorum = 0
 				// "A2. ∃f+1 messages m' ∈ S"
 				for _, mp := range vset {
 					// "∃<n,d',v'> ∈ m'.Q"
@@ -638,7 +772,7 @@ nLoop:
 	nullLoop:
 		for _, m := range vset {
 			// "m.P has no entry"
-			for _, em := range m.Pset {
+			for _, em := range m.Qset {
 				if em.SequenceNumber == n {
 					continue nullLoop
 				}
