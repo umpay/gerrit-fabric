@@ -120,19 +120,14 @@ func (instance *pbftCore) restoreState() {
 			}
 		}
 	}
-	/*
-	set := instance.restorePQSet("pset")
-	for _, e := range set {
-		instance.pset[e.SequenceNumber] = e
-	}
-	updateSeqView(set)
-	*/
+	logger.Infof("load \"qset\" data from db")
 	set := instance.restorePQSet("qset")
 	for _, e := range set {
 		instance.qset[qidx{e.BatchDigest, e.SequenceNumber}] = e
 	}
 	updateSeqView(set)
 
+	logger.Infof("load \"reqBatch\" data from db")
 	reqBatchesPacked, err := instance.consumer.ReadStateSet("reqBatch.")
 	if err == nil {
 		for k, v := range reqBatchesPacked {
@@ -148,6 +143,7 @@ func (instance *pbftCore) restoreState() {
 		logger.Warningf("Replica %d could not restore reqBatchStore: %s", instance.id, err)
 	}
 
+	logger.Infof("load \"chkpt\" data from db")
 	chkpts, err := instance.consumer.ReadStateSet("chkpt.")
 	if err == nil {
 		highSeq := uint64(0)
@@ -169,8 +165,10 @@ func (instance *pbftCore) restoreState() {
 		logger.Warningf("Replica %d could not restore checkpoints: %s", instance.id, err)
 	}
 
+	logger.Infof("load \"lastSeqNo\" data from db")
 	instance.restoreLastSeqNo()
 
+	logger.Infof("Load data complete")
 	logger.Infof("Replica %d restored state: view: %d, seqNo: %d, qset: %d, reqBatches: %d, chkpts: %d",
 		instance.id, instance.view, instance.seqNo, len(instance.qset), len(instance.reqBatchStore), len(instance.chkpts))
 }

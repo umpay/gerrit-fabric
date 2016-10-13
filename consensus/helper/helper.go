@@ -307,11 +307,13 @@ func (h *Helper) GetBlockchainInfoBlob() []byte {
 func (h *Helper) GetBlockHeadMetadata() ([]byte, error) {
 	ledger, err := ledger.GetLedger()
 	if err != nil {
+		logger.Infof("Failed to get a ledger")
 		return nil, err
 	}
 	head := ledger.GetBlockchainSize()
 	block, err := ledger.GetBlockByNumber(head - 1)
 	if err != nil {
+		logger.Infof("Failed to get block index %d",(head - 1))
 		return nil, err
 	}
 	return block.ConsensusMetadata, nil
