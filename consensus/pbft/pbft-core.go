@@ -32,6 +32,7 @@ import (
 
 	"github.com/golang/protobuf/proto"
 	"github.com/spf13/viper"
+	"github.com/hyperledger/fabric/peer/common"
 )
 
 // =============================================================================
@@ -286,7 +287,7 @@ func newPbftCore(id uint64, config *viper.Viper, consumer innerStack, etf events
 	} else {
 		logger.Infof("PBFT automatic view change disabled")
 	}
-
+	logger.Infof(common.showMemory("newPbftCore init"))
 	// init the logs
 	instance.certStore = make(map[msgID]*msgCert)
 	instance.reqBatchStore = make(map[string]*RequestBatch)
@@ -307,10 +308,10 @@ func newPbftCore(id uint64, config *viper.Viper, consumer innerStack, etf events
 	instance.missingReqBatches = make(map[string]bool)
 
 	logger.Infof("PBFT restoreState start loading data from db")
-	logger.Infof(showMemory("restoreState before"))
+	logger.Infof(common.showMemory("restoreState before"))
 	instance.restoreState()
 	logger.Infof("PBFT restoreState load data is completed")
-	logger.Infof(showMemory("restoreState after"))
+	logger.Infof(common.showMemory("restoreState after"))
 
 	instance.viewChangeSeqNo = ^uint64(0) // infinity
 	instance.updateViewChangeSeqNo()
@@ -318,22 +319,6 @@ func newPbftCore(id uint64, config *viper.Viper, consumer innerStack, etf events
 	return instance
 }
 
-func (instance *pbftCore) showMemory(desc string) string{
-	calc = func (a uint64) float64{
-		g := 1024*1024*1024   //1G
-		if a < g {  
-			return float64(a) / g * 1024
-		}
-		else {
-			return float64(a) / g
-		}
-	}
-	var mem runtime.MemStats
-    runtime.ReadMemStats(&mem)
-    return fmt.Sprintf("%s Alloc:%f TotalAlloc:%f HeapAlloc:%f HeapSys:%f"
-    			,desc,calc(mem.Alloc),calc(mem.TotalAlloc),calc(mem.HeapAlloc),calc(mem.HeapSys))
-
-}
 func (instance *pbftCore) printInfo() string{
 	var curEx uint64
 	if instance.currentExec == nil {

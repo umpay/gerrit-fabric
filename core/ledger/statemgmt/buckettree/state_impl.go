@@ -23,6 +23,7 @@ import (
 	"github.com/hyperledger/fabric/core/ledger/statemgmt"
 	"github.com/op/go-logging"
 	"github.com/tecbot/gorocksdb"
+	"github.com/hyperledger/fabric/peer/common"
 )
 
 var logger = logging.MustGetLogger("buckettree")
@@ -58,8 +59,11 @@ func (stateImpl *StateImpl) Initialize(configs map[string]interface{}) error {
 	if !ok {
 		bucketCacheMaxSize = defaultBucketCacheMaxSize
 	}
+	logger.Infof(common.showMemory("newBucketCache before"))
 	stateImpl.bucketCache = newBucketCache(bucketCacheMaxSize)
+	logger.Infof(common.showMemory("newBucketCache after"))
 	stateImpl.bucketCache.loadAllBucketNodesFromDB()
+	logger.Infof(common.showMemory("loadAllBucketNodesFromDB after"))
 	return nil
 }
 
