@@ -81,7 +81,7 @@ func newObcBatch(id uint64, config *viper.Viper, stack consensus.Stack) *obcBatc
 	op.manager = events.NewManagerImpl() // TODO, this is hacky, eventually rip it out
 	op.manager.SetReceiver(op)
 	etf := events.NewTimerFactoryImpl(op.manager)
-	op.pbft = newspbftCore(id, config, op, etf)
+	op.pbft = newSPbftCore(id, config, op, etf)
 	op.manager.Start()
 	op.externalEventReceiver.manager = op.manager
 	op.broadcaster = newBroadcaster(id, op.pbft.N, op.pbft.f, op.pbft.broadcastTimeout, stack)

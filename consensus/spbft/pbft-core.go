@@ -215,7 +215,7 @@ func (a sortableUint64Slice) Less(i, j int) bool {
 // =============================================================================
 
 
-func newspbftCore(id uint64, config *viper.Viper, consumer innerStack, etf events.TimerFactory) *spbftCore {
+func newSPbftCore(id uint64, config *viper.Viper, consumer innerStack, etf events.TimerFactory) *spbftCore {
 	var err error
 	instance := &spbftCore{}
 	instance.id = id
