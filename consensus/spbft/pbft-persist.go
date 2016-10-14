@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package pbft
+package spbft
 
 import (
 	"encoding/base64"
@@ -23,7 +23,7 @@ import (
 	"github.com/golang/protobuf/proto"
 )
 
-func (instance *pbftCore) persistQSet() {
+func (instance *spbftCore) persistQSet() {
 	var qset []*ViewChange_PQ
 
 	for _, q := range instance.calcQSet() {
@@ -32,7 +32,7 @@ func (instance *pbftCore) persistQSet() {
 
 	instance.persistPQSet("qset", qset)
 }
-
+/*
 func (instance *pbftCore) persistPSet() {
 	var pset []*ViewChange_PQ
 
@@ -42,8 +42,8 @@ func (instance *pbftCore) persistPSet() {
 
 	instance.persistPQSet("pset", pset)
 }
-
-func (instance *pbftCore) persistPQSet(key string, set []*ViewChange_PQ) {
+*/
+func (instance *spbftCore) persistPQSet(key string, set []*ViewChange_PQ) {
 	raw, err := proto.Marshal(&PQset{set})
 	if err != nil {
 		logger.Warningf("Replica %d could not persist pqset: %s: error: %s", instance.id, key, err)
@@ -55,7 +55,7 @@ func (instance *pbftCore) persistPQSet(key string, set []*ViewChange_PQ) {
 	}
 }
 
-func (instance *pbftCore) restorePQSet(key string) []*ViewChange_PQ {
+func (instance *spbftCore) restorePQSet(key string) []*ViewChange_PQ {
 	raw, err := instance.consumer.ReadState(key)
 	if err != nil {
 		logger.Debugf("Replica %d could not restore state %s: %s", instance.id, key, err)
@@ -70,7 +70,7 @@ func (instance *pbftCore) restorePQSet(key string) []*ViewChange_PQ {
 	return val.GetSet()
 }
 
-func (instance *pbftCore) persistRequestBatch(digest string) {
+func (instance *spbftCore) persistRequestBatch(digest string) {
 	reqBatch := instance.reqBatchStore[digest]
 	reqBatchPacked, err := proto.Marshal(reqBatch)
 	if err != nil {
@@ -83,11 +83,11 @@ func (instance *pbftCore) persistRequestBatch(digest string) {
 	}
 }
 
-func (instance *pbftCore) persistDelRequestBatch(digest string) {
+func (instance *spbftCore) persistDelRequestBatch(digest string) {
 	instance.consumer.DelState("reqBatch." + digest)
 }
 
-func (instance *pbftCore) persistDelAllRequestBatches() {
+func (instance *spbftCore) persistDelAllRequestBatches() {
 	reqBatches, err := instance.consumer.ReadStateSet("reqBatch.")
 	if err == nil {
 		for k := range reqBatches {
@@ -96,7 +96,7 @@ func (instance *pbftCore) persistDelAllRequestBatches() {
 	}
 }
 
-func (instance *pbftCore) persistCheckpoint(seqNo uint64, id []byte) {
+func (instance *spbftCore) persistCheckpoint(seqNo uint64, id []byte) {
 	key := fmt.Sprintf("chkpt.%d", seqNo)
 	err := instance.consumer.StoreState(key, id)
 	if err != nil {
@@ -104,12 +104,12 @@ func (instance *pbftCore) persistCheckpoint(seqNo uint64, id []byte) {
 	}
 }
 
-func (instance *pbftCore) persistDelCheckpoint(seqNo uint64) {
+func (instance *spbftCore) persistDelCheckpoint(seqNo uint64) {
 	key := fmt.Sprintf("chkpt.%d", seqNo)
 	instance.consumer.DelState(key)
 }
 
-func (instance *pbftCore) restoreState() {
+func (instance *spbftCore) restoreState() {
 	updateSeqView := func(set []*ViewChange_PQ) {
 		for _, e := range set {
 			if instance.view < e.View {
@@ -120,19 +120,21 @@ func (instance *pbftCore) restoreState() {
 			}
 		}
 	}
-
+	/*
 	set := instance.restorePQSet("pset")
 	for _, e := range set {
 		instance.pset[e.SequenceNumber] = e
 	}
 	updateSeqView(set)
-
-	set = instance.restorePQSet("qset")
+	*/
+	logger.Infof("load \"qset\" data from db")
+	set := instance.restorePQSet("qset")
 	for _, e := range set {
 		instance.qset[qidx{e.BatchDigest, e.SequenceNumber}] = e
 	}
 	updateSeqView(set)
 
+	logger.Infof("load \"reqBatch\" data from db")
 	reqBatchesPacked, err := instance.consumer.ReadStateSet("reqBatch.")
 	if err == nil {
 		for k, v := range reqBatchesPacked {
@@ -148,6 +150,7 @@ func (instance *pbftCore) restoreState() {
 		logger.Warningf("Replica %d could not restore reqBatchStore: %s", instance.id, err)
 	}
 
+	logger.Infof("load \"chkpt\" data from db")
 	chkpts, err := instance.consumer.ReadStateSet("chkpt.")
 	if err == nil {
 		highSeq := uint64(0)
@@ -169,13 +172,15 @@ func (instance *pbftCore) restoreState() {
 		logger.Warningf("Replica %d could not restore checkpoints: %s", instance.id, err)
 	}
 
+	logger.Infof("load \"lastSeqNo\" data from db")
 	instance.restoreLastSeqNo()
+	logger.Infof("Load data complete")
 
-	logger.Infof("Replica %d restored state: view: %d, seqNo: %d, pset: %d, qset: %d, reqBatches: %d, chkpts: %d",
-		instance.id, instance.view, instance.seqNo, len(instance.pset), len(instance.qset), len(instance.reqBatchStore), len(instance.chkpts))
+	logger.Infof("Replica %d restored state: view: %d, seqNo: %d, qset: %d, reqBatches: %d, chkpts: %d",
+		instance.id, instance.view, instance.seqNo, len(instance.qset), len(instance.reqBatchStore), len(instance.chkpts))
 }
 
-func (instance *pbftCore) restoreLastSeqNo() {
+func (instance *spbftCore) restoreLastSeqNo() {
 	var err error
 	if instance.lastExec, err = instance.consumer.getLastSeqNo(); err != nil {
 		logger.Warningf("Replica %d could not restore lastExec: %s", instance.id, err)

@@ -18,7 +18,7 @@ syntax = "proto3";
 
 import "google/protobuf/timestamp.proto";
 
-package pbft;
+package spbft;
 
 /*
  * mapping to PBFT paper names
@@ -38,13 +38,13 @@ message message {
     oneof payload {
         request_batch request_batch = 1;
         pre_prepare pre_prepare = 2;
-        prepare prepare = 3;
-        commit commit = 4;
-        checkpoint checkpoint = 5;
-        view_change view_change = 6;
-        new_view new_view = 7;
-        fetch_request_batch fetch_request_batch = 8;
-        request_batch return_request_batch = 9;
+        /*prepare prepare = 3;*/
+        commit commit = 3;
+        checkpoint checkpoint = 4;
+        view_change view_change = 5;
+        new_view new_view = 6;
+        fetch_request_batch fetch_request_batch = 7;
+        request_batch return_request_batch = 8;
     }
 }
 
@@ -63,13 +63,14 @@ message pre_prepare {
     uint64 replica_id = 5;
 }
 
+/*
 message prepare {
     uint64 view = 1;
     uint64 sequence_number = 2;
     string batch_digest = 3;
     uint64 replica_id = 4;
 }
-
+*/
 message commit {
     uint64 view = 1;
     uint64 sequence_number = 2;
@@ -103,10 +104,9 @@ message view_change {
     uint64 view = 1;
     uint64 h = 2;
     repeated C cset = 3;
-    repeated PQ pset = 4;
-    repeated PQ qset = 5;
-    uint64 replica_id = 6;
-    bytes signature = 7;
+    repeated PQ qset = 4;
+    uint64 replica_id = 5;
+    bytes signature = 6;
 }
 
 message PQset {

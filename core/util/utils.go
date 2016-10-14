@@ -24,7 +24,7 @@ import (
 	"math/big"
 	"strings"
 	"time"
-
+	"runtime"
 	gp "google/protobuf"
 
 	"golang.org/x/crypto/sha3"
@@ -140,4 +140,21 @@ func ArrayToChaincodeArgs(args []string) [][]byte {
 		bargs[i] = []byte(arg)
 	}
 	return bargs
+}
+
+//Get memory information
+func ShowMemory(desc string) string{
+	calc := func (a uint64) string{
+             var num,g float64
+             g = 1024*1024*1024  //1G
+             num = float64(a)
+             if num < g {
+                 return fmt.Sprintf("%.2f%s",num / g * 1024.0,"M")
+             }else {
+                 return fmt.Sprintf("%.2f%s",num / g,"G")
+             }
+        }
+	var mem runtime.MemStats
+    runtime.ReadMemStats(&mem)
+    return fmt.Sprintf("%s Alloc:%s TotalAlloc:%s HeapAlloc:%s HeapSys:%s",desc,calc(mem.Alloc),calc(mem.TotalAlloc),calc(mem.HeapAlloc),calc(mem.HeapSys))
 }
