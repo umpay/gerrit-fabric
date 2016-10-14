@@ -64,6 +64,7 @@ type Message_RequestBatch struct {
 type Message_PrePrepare struct {
 	PrePrepare *PrePrepare `protobuf:"bytes,2,opt,name=pre_prepare,oneof"`
 }
+
 /*
 type Message_Prepare struct {
 	Prepare *Prepare `protobuf:"bytes,3,opt,name=prepare,oneof"`
@@ -87,8 +88,9 @@ type Message_ReturnRequestBatch struct {
 	ReturnRequestBatch *RequestBatch `protobuf:"bytes,9,opt,name=return_request_batch,oneof"`
 }
 
-func (*Message_RequestBatch) isMessage_Payload()       {}
-func (*Message_PrePrepare) isMessage_Payload()         {}
+func (*Message_RequestBatch) isMessage_Payload() {}
+func (*Message_PrePrepare) isMessage_Payload()   {}
+
 //func (*Message_Prepare) isMessage_Payload()            {}
 func (*Message_Commit) isMessage_Payload()             {}
 func (*Message_Checkpoint) isMessage_Payload()         {}
@@ -117,6 +119,7 @@ func (m *Message) GetPrePrepare() *PrePrepare {
 	}
 	return nil
 }
+
 /*
 func (m *Message) GetPrepare() *Prepare {
 	if x, ok := m.GetPayload().(*Message_Prepare); ok {
@@ -197,10 +200,10 @@ func _Message_OneofMarshaler(msg proto.Message, b *proto.Buffer) error {
 			return err
 		}
 	/*case *Message_Prepare:
-		b.EncodeVarint(3<<3 | proto.WireBytes)
-		if err := b.EncodeMessage(x.Prepare); err != nil {
-			return err
-		}*/
+	b.EncodeVarint(3<<3 | proto.WireBytes)
+	if err := b.EncodeMessage(x.Prepare); err != nil {
+		return err
+	}*/
 	case *Message_Commit:
 		b.EncodeVarint(3<<3 | proto.WireBytes)
 		if err := b.EncodeMessage(x.Commit); err != nil {
@@ -258,13 +261,13 @@ func _Message_OneofUnmarshaler(msg proto.Message, tag, wire int, b *proto.Buffer
 		m.Payload = &Message_PrePrepare{msg}
 		return true, err
 	/*case 3: // payload.prepare
-		if wire != proto.WireBytes {
-			return true, proto.ErrInternalBadWireType
-		}
-		msg := new(Prepare)
-		err := b.DecodeMessage(msg)
-		m.Payload = &Message_Prepare{msg}
-		return true, err*/
+	if wire != proto.WireBytes {
+		return true, proto.ErrInternalBadWireType
+	}
+	msg := new(Prepare)
+	err := b.DecodeMessage(msg)
+	m.Payload = &Message_Prepare{msg}
+	return true, err*/
 	case 3: // payload.commit
 		if wire != proto.WireBytes {
 			return true, proto.ErrInternalBadWireType
@@ -354,6 +357,7 @@ func (m *PrePrepare) GetRequestBatch() *RequestBatch {
 	}
 	return nil
 }
+
 /*
 type Prepare struct {
 	View           uint64 `protobuf:"varint,1,opt,name=view" json:"view,omitempty"`
@@ -415,14 +419,6 @@ func (m *ViewChange) GetCset() []*ViewChange_C {
 	}
 	return nil
 }
-
-/*
-func (m *ViewChange) GetPset() []*ViewChange_PQ {
-	if m != nil {
-		return m.Pset
-	}
-	return nil
-}*/
 
 func (m *ViewChange) GetQset() []*ViewChange_PQ {
 	if m != nil {
