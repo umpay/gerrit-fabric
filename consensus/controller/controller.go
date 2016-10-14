@@ -25,6 +25,7 @@ import (
 	"github.com/hyperledger/fabric/consensus"
 	"github.com/hyperledger/fabric/consensus/noops"
 	"github.com/hyperledger/fabric/consensus/pbft"
+	"github.com/hyperledger/fabric/consensus/spbft"
 )
 
 var logger *logging.Logger // package-level logger
@@ -41,8 +42,12 @@ func NewConsenter(stack consensus.Stack) consensus.Consenter {
 	if plugin == "pbft" {
 		logger.Infof("Creating consensus plugin %s", plugin)
 		return pbft.GetPlugin(stack)
-	}
-	logger.Info("Creating default consensus plugin (noops)")
-	return noops.GetNoops(stack)
+	}else if plugin == "spbft" {
+		logger.Info("Creating consensus plugin %s",plugin)
+		return spbft.GetPlugin(stack)
+	}else{
+		logger.Info("Creating default consensus plugin (noops)")
+		return noops.GetNoops(stack)
+        }
 
 }
