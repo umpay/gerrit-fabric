@@ -32,17 +32,7 @@ func (instance *spbftCore) persistQSet() {
 
 	instance.persistPQSet("qset", qset)
 }
-/*
-func (instance *pbftCore) persistPSet() {
-	var pset []*ViewChange_PQ
 
-	for _, p := range instance.calcPSet() {
-		pset = append(pset, p)
-	}
-
-	instance.persistPQSet("pset", pset)
-}
-*/
 func (instance *spbftCore) persistPQSet(key string, set []*ViewChange_PQ) {
 	raw, err := proto.Marshal(&PQset{set})
 	if err != nil {
@@ -72,7 +62,7 @@ func (instance *spbftCore) restorePQSet(key string) []*ViewChange_PQ {
 
 func (instance *spbftCore) persistRequestBatch(digest string) {
 	reqBatch := instance.reqBatchStore[digest]
-	reqBatchPacked, err := proto.Marshal(reqBatch)
+	reqBatchPacked, err := proto.Marshal(reqBatch.batch)
 	if err != nil {
 		logger.Warningf("Replica %d could not persist request batch %s: %s", instance.id, digest, err)
 		return
@@ -120,13 +110,7 @@ func (instance *spbftCore) restoreState() {
 			}
 		}
 	}
-	/*
-	set := instance.restorePQSet("pset")
-	for _, e := range set {
-		instance.pset[e.SequenceNumber] = e
-	}
-	updateSeqView(set)
-	*/
+	
 	logger.Infof("load \"qset\" data from db")
 	set := instance.restorePQSet("qset")
 	for _, e := range set {
@@ -143,7 +127,7 @@ func (instance *spbftCore) restoreState() {
 			if err != nil {
 				logger.Warningf("Replica %d could not restore request batch %s", instance.id, k)
 			} else {
-				instance.reqBatchStore[hash(reqBatch)] = reqBatch
+				instance.reqBatchStore[hash(reqBatch)] = vReqBatch{reqBatch,instance.view}
 			}
 		}
 	} else {

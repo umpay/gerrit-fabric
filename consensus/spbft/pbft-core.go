@@ -1,12 +1,9 @@
 /*
 Copyright IBM Corp. 2016 All Rights Reserved.
-
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
-
 		 http://www.apache.org/licenses/LICENSE-2.0
-
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -30,8 +27,8 @@ import (
 	"github.com/op/go-logging"
 
 	"github.com/golang/protobuf/proto"
-	"github.com/hyperledger/fabric/core/util"
 	"github.com/spf13/viper"
+	"github.com/hyperledger/fabric/core/util"
 )
 
 // =============================================================================
@@ -139,6 +136,7 @@ type spbftCore struct {
 	seqNo         uint64            // PBFT "n", strictly monotonic increasing sequence number
 	view          uint64            // current view
 	chkpts        map[uint64]string // state checkpoints; map lastExec to global hash
+	//pset          map[uint64]*ViewChange_PQ
 	qset          map[qidx]*ViewChange_PQ
 
 	skipInProgress    bool               // Set when we have detected a fall behind scenario until we pick a new starting point
@@ -166,11 +164,16 @@ type spbftCore struct {
 	missingReqBatches map[string]bool // for all the assigned, non-checkpointed request batches we might be missing during view-change
 
 	// implementation of PBFT `in`
-	reqBatchStore   map[string]*RequestBatch // track request batches
+	reqBatchStore   map[string]vReqBatch 	// track request batches
 	certStore       map[msgID]*msgCert       // track quorum certificates for requests
 	checkpointStore map[Checkpoint]bool      // track checkpoints as set
 	viewChangeStore map[vcidx]*ViewChange    // track view-change messages
 	newViewStore    map[uint64]*NewView      // track last new-view we received or sent
+}
+
+type vReqBatch struct{
+	batch  *RequestBatch
+	view 	uint64
 }
 
 type qidx struct {
@@ -184,12 +187,12 @@ type msgID struct { // our index through certStore
 }
 
 type msgCert struct {
-	digest     string
-	prePrepare *PrePrepare
+	digest      string
+	prePrepare  *PrePrepare
 	//sentPrepare bool
 	//prepare     []*Prepare
-	sentCommit bool
-	commit     []*Commit
+	sentCommit  bool
+	commit      []*Commit
 }
 
 type vcidx struct {
@@ -213,11 +216,13 @@ func (a sortableUint64Slice) Less(i, j int) bool {
 // constructors
 // =============================================================================
 
+
 func newSPbftCore(id uint64, config *viper.Viper, consumer innerStack, etf events.TimerFactory) *spbftCore {
 	var err error
 	instance := &spbftCore{}
 	instance.id = id
 	instance.consumer = consumer
+	instance.printInfo("create newSPbftCore")
 	instance.newViewTimer = etf.CreateTimer()
 	instance.vcResendTimer = etf.CreateTimer()
 	instance.nullRequestTimer = etf.CreateTimer()
@@ -287,10 +292,11 @@ func newSPbftCore(id uint64, config *viper.Viper, consumer innerStack, etf event
 	logger.Infof(util.ShowMemory("newPbftCore init"))
 	// init the logs
 	instance.certStore = make(map[msgID]*msgCert)
-	instance.reqBatchStore = make(map[string]*RequestBatch)
+	instance.reqBatchStore = make(map[string]vReqBatch)
 	instance.checkpointStore = make(map[Checkpoint]bool)
 	instance.chkpts = make(map[uint64]string)
 	instance.viewChangeStore = make(map[vcidx]*ViewChange)
+	//instance.pset = make(map[uint64]*ViewChange_PQ)
 	instance.qset = make(map[qidx]*ViewChange_PQ)
 	instance.newViewStore = make(map[uint64]*NewView)
 
@@ -315,6 +321,30 @@ func newSPbftCore(id uint64, config *viper.Viper, consumer innerStack, etf event
 	return instance
 }
 
+func (instance *spbftCore) printInfo(desc string) {
+	var curEx,primary uint64
+	if instance.currentExec == nil {
+		curEx  = 0
+	}else {
+		curEx = *instance.currentExec
+	}
+
+	if instance.view == 0{
+		primary = 9
+	}else{
+		primary = instance.primary(instance.view)
+    }
+	logger.Warningf("----%s id:%d pri:%d h:%d seqNo:%d view:%d curEx:%d laEx:%d actView:%t timAct:%t---",desc,instance.id,primary,instance.h,instance.seqNo,instance.view,curEx,instance.lastExec,instance.activeView,instance.timerActive)
+}
+
+func (instance *spbftCore) printReqStore(){
+	s:= fmt.Sprintf("\n----showReqBatch--pri:%t id:%d  reqBatchStore:%d  outstandingReqBatches:%d\n",(instance.primary(instance.view)==instance.id) ,instance.id,len(instance.reqBatchStore),len(instance.outstandingReqBatches))
+        for k,v := range instance.reqBatchStore{
+              s+= fmt.Sprintf("   -----h:%s  v:%d size:%d-\n",k,v.view,len(v.batch.GetBatch()))
+        }
+    logger.Warningf(s)
+}
+
 // close tears down resources opened by newspbftCore
 func (instance *spbftCore) close() {
 	instance.newViewTimer.Halt()
@@ -327,6 +357,7 @@ func (instance *spbftCore) ProcessEvent(e events.Event) events.Event {
 	logger.Debugf("Replica %d processing event", instance.id)
 	switch et := e.(type) {
 	case viewChangeTimerEvent:
+		instance.printInfo("viewChangeTimerEvent01")
 		logger.Infof("Replica %d view change timer expired, sending view change: %s", instance.id, instance.newViewTimerReason)
 		instance.timerActive = false
 		instance.sendViewChange()
@@ -341,24 +372,33 @@ func (instance *spbftCore) ProcessEvent(e events.Event) events.Event {
 		}
 		return next
 	case *RequestBatch:
+		instance.printInfo("recvRequestBatch01")
 		err = instance.recvRequestBatch(et)
 	case *PrePrepare:
+		instance.printInfo("recvPrePrepare01")
 		err = instance.recvPrePrepare(et)
 	//case *Prepare:
 	//	err = instance.recvPrepare(et)
 	case *Commit:
+		instance.printInfo("recvCommit01")
 		err = instance.recvCommit(et)
 	case *Checkpoint:
+		instance.printInfo("recvCheckpoint01")
 		return instance.recvCheckpoint(et)
 	case *ViewChange:
+		instance.printInfo("recvViewChange01")
 		return instance.recvViewChange(et)
 	case *NewView:
+		instance.printInfo("recvNewView01")
 		return instance.recvNewView(et)
 	case *FetchRequestBatch:
+		instance.printInfo("recvFetchRequestBatch01")
 		err = instance.recvFetchRequestBatch(et)
 	case returnRequestBatchEvent:
+		instance.printInfo("recvReturnRequestBatch01")
 		return instance.recvReturnRequestBatch(et)
 	case stateUpdatedEvent:
+		instance.printInfo("stateUpdatedEvent01")
 		update := et.chkpt
 		instance.stateTransferring = false
 		// If state transfer did not complete successfully, or if it did not reach our low watermark, do it again
@@ -386,6 +426,7 @@ func (instance *spbftCore) ProcessEvent(e events.Event) events.Event {
 		instance.consumer.validateState()
 		instance.executeOutstanding()
 	case execDoneEvent:
+		instance.printInfo("execDoneEvent01")
 		instance.execDoneSync()
 		if instance.skipInProgress {
 			instance.retryStateTransfer(nil)
@@ -393,10 +434,12 @@ func (instance *spbftCore) ProcessEvent(e events.Event) events.Event {
 		// We will delay new view processing sometimes
 		return instance.processNewView()
 	case nullRequestEvent:
+		instance.printInfo("nullRequestEvent01")
 		instance.nullRequestHandler()
 	case workEvent:
 		et() // Used to allow the caller to steal use of the main thread, to be removed
 	case viewChangeQuorumEvent:
+		instance.printInfo("viewChangeQuorumEvent01")
 		logger.Debugf("Replica %d received view change quorum, processing new view", instance.id)
 		if instance.primary(instance.view) == instance.id {
 			return instance.sendNewView()
@@ -405,6 +448,7 @@ func (instance *spbftCore) ProcessEvent(e events.Event) events.Event {
 	case viewChangedEvent:
 		// No-op, processed by plugins if needed
 	case viewChangeResendTimerEvent:
+		instance.printInfo("viewChangeResendTimerEvent01")
 		if instance.activeView {
 			logger.Warningf("Replica %d had its view change resend timer expire but it's in an active view, this is benign but may indicate a bug", instance.id)
 			return nil
@@ -583,9 +627,19 @@ func (instance *spbftCore) recvRequestBatch(reqBatch *RequestBatch) error {
 	digest := hash(reqBatch)
 	logger.Debugf("Replica %d received request batch %s", instance.id, digest)
 
-	instance.reqBatchStore[digest] = reqBatch
+        seqNoTmp := instance.seqNo +1
+	if !instance.inWV(instance.view, seqNoTmp) || seqNoTmp > instance.h+instance.L/2 {
+		// We don't have the necessary stable certificates to advance our watermarks
+		logger.Warningf("---recvRequestBatchxyz----Primary %d not sending batch:%s", instance.id, digest)
+		return nil
+	}
+
+	// add for ignore the batch which is  out watermakr  data: 2016.10.24  tag:ignore
+	// begin ignore
+	instance.reqBatchStore[digest] = vReqBatch{reqBatch,instance.view}
 	instance.outstandingReqBatches[digest] = reqBatch
 	instance.persistRequestBatch(digest)
+	//end ignore
 	if instance.activeView {
 		instance.softStartTimer(instance.requestTimeout, fmt.Sprintf("new request batch %s", digest))
 	}
@@ -600,7 +654,7 @@ func (instance *spbftCore) recvRequestBatch(reqBatch *RequestBatch) error {
 
 func (instance *spbftCore) sendPrePrepare(reqBatch *RequestBatch, digest string) {
 	logger.Debugf("Replica %d is primary, issuing pre-prepare for request batch %s", instance.id, digest)
-
+	instance.printReqStore()
 	n := instance.seqNo + 1
 	for _, cert := range instance.certStore { // check for other PRE-PREPARE for same digest, but different seqNo
 		if p := cert.prePrepare; p != nil {
@@ -645,7 +699,7 @@ func (instance *spbftCore) resubmitRequestBatches() {
 	}
 
 	var submissionOrder []*RequestBatch
-
+	index :=1
 outer:
 	for d, reqBatch := range instance.outstandingReqBatches {
 		for _, cert := range instance.certStore {
@@ -656,8 +710,9 @@ outer:
 		}
 		logger.Debugf("Replica %d has detected request batch %s must be resubmitted", instance.id, d)
 		submissionOrder = append(submissionOrder, reqBatch)
+		index += 1
 	}
-
+	
 	if len(submissionOrder) == 0 {
 		return
 	}
@@ -672,7 +727,7 @@ outer:
 func (instance *spbftCore) recvPrePrepare(preprep *PrePrepare) error {
 	logger.Debugf("Replica %d received pre-prepare from replica %d for view=%d/seqNo=%d",
 		instance.id, preprep.ReplicaId, preprep.View, preprep.SequenceNumber)
-
+	instance.printReqStore()
 	if !instance.activeView {
 		logger.Debugf("Replica %d ignoring pre-prepare as we are in a view change", instance.id)
 		return nil
@@ -684,6 +739,7 @@ func (instance *spbftCore) recvPrePrepare(preprep *PrePrepare) error {
 	}
 
 	if !instance.inWV(preprep.View, preprep.SequenceNumber) {
+		logger.Errorf("recvPrePrepare not inmv id:%d recV:%d seq:%d h:%d",instance.id,preprep.View, preprep.SequenceNumber,preprep.BatchDigest)
 		if preprep.SequenceNumber != instance.h && !instance.skipInProgress {
 			logger.Warningf("Replica %d pre-prepare view different, or sequence number outside watermarks: preprep.View %d, expected.View %d, seqNo %d, low-mark %d", instance.id, preprep.View, instance.primary(instance.view), preprep.SequenceNumber, instance.h)
 		} else {
@@ -717,7 +773,7 @@ func (instance *spbftCore) recvPrePrepare(preprep *PrePrepare) error {
 			logger.Warningf("Pre-prepare and request digest do not match: request %s, digest %s", digest, preprep.BatchDigest)
 			return nil
 		}
-		instance.reqBatchStore[digest] = preprep.GetRequestBatch()
+		instance.reqBatchStore[digest] = vReqBatch{preprep.GetRequestBatch(),preprep.View}
 		logger.Debugf("Replica %d storing request batch %s in outstanding request batch store", instance.id, digest)
 		instance.outstandingReqBatches[digest] = preprep.GetRequestBatch()
 		instance.persistRequestBatch(digest)
@@ -728,7 +784,7 @@ func (instance *spbftCore) recvPrePrepare(preprep *PrePrepare) error {
 
 	if instance.primary(instance.view) != instance.id && instance.prePrepared(preprep.BatchDigest, preprep.View, preprep.SequenceNumber) {
 		logger.Debugf("Backup %d broadcasting prepare for view=%d/seqNo=%d", instance.id, preprep.View, preprep.SequenceNumber)
-
+		
 		instance.persistQSet()
 		return instance.maybeSendCommit(preprep.BatchDigest, preprep.View, preprep.SequenceNumber)
 	}
@@ -736,6 +792,7 @@ func (instance *spbftCore) recvPrePrepare(preprep *PrePrepare) error {
 	return nil
 }
 
+//
 func (instance *spbftCore) maybeSendCommit(digest string, v uint64, n uint64) error {
 	cert := instance.getCert(v, n)
 	//if instance.prepared(digest, v, n) && !cert.sentCommit {
@@ -892,7 +949,7 @@ func (instance *spbftCore) executeOne(idx msgID) bool {
 		logger.Infof("Replica %d executing/committing request batch for view=%d/seqNo=%d and digest %s",
 			instance.id, idx.v, idx.n, digest)
 		// synchronously execute, it is the other side's responsibility to execute in the background if needed
-		instance.consumer.execute(idx.n, reqBatch)
+		instance.consumer.execute(idx.n, reqBatch.batch)
 	}
 	return true
 }
@@ -906,7 +963,7 @@ func (instance *spbftCore) Checkpoint(seqNo uint64, id []byte) {
 	idAsString := base64.StdEncoding.EncodeToString(id)
 
 	logger.Debugf("Replica %d preparing checkpoint for view=%d/seqNo=%d and b64 id of %s",
-		instance.id, instance.view, seqNo, idAsString)
+		instance.id, instance.view, seqNo, idAsString)		
 
 	chkpt := &Checkpoint{
 		SequenceNumber: seqNo,
@@ -918,6 +975,17 @@ func (instance *spbftCore) Checkpoint(seqNo uint64, id []byte) {
 	instance.persistCheckpoint(seqNo, id)
 	instance.recvCheckpoint(chkpt)
 	instance.innerBroadcast(&Message{Payload: &Message_Checkpoint{Checkpoint: chkpt}})
+}
+
+func (instance *spbftCore) delReqBatch(){
+	logger.Infof("Replica %d delete not used ReqBatch",instance.id)
+	for k,v := range instance.reqBatchStore{
+		if instance.view >=4 && v.view < instance.view - 4{
+			delete(instance.reqBatchStore,k)
+			instance.persistDelRequestBatch(k)
+			logger.Warningf("----delete--Replica %d  curV:%d v:%d h:%s",instance.id,instance.view,v.view,k)
+		}
+	}
 }
 
 func (instance *spbftCore) execDoneSync() {
@@ -946,6 +1014,7 @@ func (instance *spbftCore) moveWatermarks(n uint64) {
 		if idx.n <= h {
 			logger.Debugf("Replica %d cleaning quorum certificate for view=%d/seqNo=%d",
 				instance.id, idx.v, idx.n)
+
 			instance.persistDelRequestBatch(cert.digest)
 			delete(instance.reqBatchStore, cert.digest)
 			delete(instance.certStore, idx)
@@ -975,7 +1044,7 @@ func (instance *spbftCore) moveWatermarks(n uint64) {
 
 	instance.h = h
 
-	logger.Debugf("Replica %d updated low watermark to %d",
+	logger.Infof("Replica %d updated low watermark to %d",
 		instance.id, instance.h)
 
 	instance.resubmitRequestBatches()
@@ -1012,7 +1081,7 @@ func (instance *spbftCore) weakCheckpointSetOutOfRange(chkpt *Checkpoint) bool {
 			// (This is because all_replicas - missed - me = 3f+1 - f - 1 = 2f)
 			if m := chkptSeqNumArray[len(chkptSeqNumArray)-(instance.f+1)]; m > H {
 				logger.Warningf("Replica %d is out of date, f+1 nodes agree checkpoint with seqNo %d exists but our high water mark is %d", instance.id, chkpt.SequenceNumber, H)
-				instance.reqBatchStore = make(map[string]*RequestBatch) // Discard all our requests, as we will never know which were executed, to be addressed in #394
+				instance.reqBatchStore = make(map[string]vReqBatch) // Discard all our requests, as we will never know which were executed, to be addressed in #394
 				instance.persistDelAllRequestBatches()
 				instance.moveWatermarks(m)
 				instance.outstandingReqBatches = make(map[string]*RequestBatch)
@@ -1047,7 +1116,6 @@ func (instance *spbftCore) witnessCheckpointWeakCert(chkpt *Checkpoint) {
 		logger.Error(err.Error())
 		return
 	}
-
 	target := &stateUpdateTarget{
 		checkpointMessage: checkpointMessage{
 			seqNo: chkpt.SequenceNumber,
@@ -1082,7 +1150,6 @@ func (instance *spbftCore) recvCheckpoint(chkpt *Checkpoint) events.Event {
 		}
 		return nil
 	}
-
 	instance.checkpointStore[*chkpt] = true
 
 	matching := 0
@@ -1138,7 +1205,7 @@ func (instance *spbftCore) recvCheckpoint(chkpt *Checkpoint) events.Event {
 	}
 
 	instance.moveWatermarks(chkpt.SequenceNumber)
-
+        instance.delReqBatch()
 	return instance.processNewView()
 }
 
@@ -1163,7 +1230,7 @@ func (instance *spbftCore) recvFetchRequestBatch(fr *FetchRequestBatch) (err err
 	}
 
 	reqBatch := instance.reqBatchStore[digest]
-	msg := &Message{Payload: &Message_ReturnRequestBatch{ReturnRequestBatch: reqBatch}}
+	msg := &Message{Payload: &Message_ReturnRequestBatch{ReturnRequestBatch: reqBatch.batch}}
 	msgPacked, err := proto.Marshal(msg)
 	if err != nil {
 		return fmt.Errorf("Error marshalling return-request-batch message: %v", err)
@@ -1180,7 +1247,7 @@ func (instance *spbftCore) recvReturnRequestBatch(reqBatch *RequestBatch) events
 	if _, ok := instance.missingReqBatches[digest]; !ok {
 		return nil // either the wrong digest, or we got it already from someone else
 	}
-	instance.reqBatchStore[digest] = reqBatch
+	instance.reqBatchStore[digest] = vReqBatch{reqBatch,instance.view} //view is cur view
 	delete(instance.missingReqBatches, digest)
 	instance.persistRequestBatch(digest)
 	return instance.processNewView()

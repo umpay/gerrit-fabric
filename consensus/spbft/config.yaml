@@ -38,7 +38,7 @@ general:
     byzantine: false
 
     # After how many checkpoint periods the primary gets cycled automatically.  Set to 0 to disable.
-    viewchangeperiod: 0
+    viewchangeperiod: 5
 
     # Timeouts
     timeout:
