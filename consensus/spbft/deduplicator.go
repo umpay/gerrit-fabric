@@ -70,3 +70,9 @@ func (d *deduplicator) IsNew(req *Request) bool {
 	reqTime := time.Unix(req.Timestamp.Seconds, int64(req.Timestamp.Nanos))
 	return reqTime.After(d.execTimestamps[req.ReplicaId])
 }
+
+func (d *deduplicator) UpdateExecTime(id uint64,t time.Time){
+	if t.After(d.execTimestamps[id]) {
+		d.execTimestamps[id] = t
+	}
+}

@@ -33,12 +33,11 @@ general:
 
     # How many requests should the primary send per pre-prepare when in "batch" mode
     batchsize: 500
-
     # Whether the replica should act as a byzantine one; useful for debugging on testnets
     byzantine: false
 
     # After how many checkpoint periods the primary gets cycled automatically.  Set to 0 to disable.
-    viewchangeperiod: 0
+    viewchangeperiod: 5
 
     # Timeouts
     timeout:

@@ -143,6 +143,7 @@ func (instance *spbftCore) sendViewChange() events.Event {
 	// clear old messages
 	for idx := range instance.certStore {
 		if idx.v < instance.view {
+			logger.Testf("--sendViewChange-del certStore-id:%d curV:%d  n/v:%d/%d hash:%s",instance.id,instance.view,idx.n,idx.v,instance.certStore[idx].digest)
 			delete(instance.certStore, idx)
 		}
 	}
@@ -288,7 +289,7 @@ func (instance *spbftCore) showMsgList(funcName string,seqNo uint64,vset []*View
 		res += fmt.Sprintf("-----RId:%d  ID:%d key:%d hash:%s\n",instance.id,index,k,v)
 		index +=1
 	}
-	logger.Errorf("\n--------showMsgList------ReplicaId：%d--------\n%s\n",instance.id,res)
+//	logger.Testf("\n--------showMsgList------ReplicaId：%d--------\n%s\n",instance.id,res)
 }
 
 func (instance *spbftCore) sendNewView() events.Event {
@@ -516,7 +517,7 @@ func (instance *spbftCore) processNewView2(nv *NewView) events.Event {
 			View:           instance.view,
 			SequenceNumber: n,
 			BatchDigest:    d,
-			RequestBatch:   reqBatch,
+			RequestBatch:   reqBatch.batch,
 			ReplicaId:      instance.id,
 		}
 		cert := instance.getCert(instance.view, n)
@@ -556,7 +557,7 @@ func (instance *spbftCore) processNewView2(nv *NewView) events.Event {
 	instance.startTimerIfOutstandingRequests()
 
 	logger.Debugf("Replica %d done cleaning view change artifacts, calling into consumer", instance.id)
-
+        instance.delReqBatch()
 	return viewChangedEvent{}
 }
 
