@@ -1386,7 +1386,6 @@ func (instance *spbftCore) startTimerIfOutstandingRequests() {
 
 func (instance *spbftCore) softStartTimer(timeout time.Duration, reason string) {
 	logger.Debugf("Replica %d soft starting new view timer for %s: %s", instance.id, timeout, reason)
-	logger.Testf("--timerx-id:%d soft starting new view timer for %s: %s", instance.id, timeout, reason)
 	instance.newViewTimerReason = reason
 	instance.timerActive = true
 	instance.newViewTimer.SoftReset(timeout, viewChangeTimerEvent{})
@@ -1400,7 +1399,6 @@ func (instance *spbftCore) startTimer(timeout time.Duration, reason string) {
 
 func (instance *spbftCore) stopTimer() {
 	logger.Debugf("Replica %d stopping a running new view timer", instance.id)
-	logger.Testf("--timerx-id:%d stopping a running new view timer", instance.id)
 	instance.timerActive = false
 	instance.newViewTimer.Stop()
 }

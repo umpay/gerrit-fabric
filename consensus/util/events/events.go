@@ -85,7 +85,7 @@ type managerImpl struct {
 // NewManagerImpl creates an instance of managerImpl
 func NewManagerImpl() Manager {
 	return &managerImpl{
-		events:   make(chan Event),
+		events:   make(chan Event,50),
 		threaded: threaded{make(chan struct{})},
 	}
 }

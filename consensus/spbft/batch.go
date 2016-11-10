@@ -121,7 +121,7 @@ func newObcBatch(id uint64, config *viper.Viper, stack consensus.Stack) *obcBatc
 		logger.Warningf("Configured null request timeout must be greater than request timeout, setting to %v", op.pbft.nullRequestTimeout)
 	}
 
-	op.incomingChan = make(chan batchMessage,500)  //new
+	op.incomingChan = make(chan batchMessage,op.batchSize)  //new
 
 	op.deduplicatorChan = make(chan lastExecTime,10) //new
 	
@@ -230,7 +230,6 @@ func (op *obcBatch) execute(seqNo uint64, reqBatch *RequestBatch) {
 			execTime.lastExecTime = reqTime
 			execTime.id = req.ReplicaId
 			index += 1
-			logger.Testf("---UpdateExecTime---id:%d ",op.pbft.id)
 		}
 	}
 	op.deduplicatorChan <- execTime
@@ -401,11 +400,54 @@ func (op *obcBatch) sendBatchNew(reason string) events.Event {
 }
 
 func (op *obcBatch) RecvMsg(ocMsg *pb.Message, senderHandle *pb.PeerID) error {
-	op.incomingChan <- batchMessage{
-		msg:    ocMsg,
-		sender: senderHandle,
-	}
+	op.distributeMsg(ocMsg,senderHandle)
 	return nil
+}
+
+func (op *obcBatch) distributeMsg(ocMsg *pb.Message, senderHandle *pb.PeerID) {
+	if ocMsg.Type == pb.Message_CHAIN_TRANSACTION {
+		op.incomingChan <- batchMessage{  //tx
+			msg:    ocMsg,
+			sender: senderHandle,
+		}
+	}else{
+		if ocMsg.Type != pb.Message_CONSENSUS {
+			logger.Errorf("Unexpected message type: %s", ocMsg.Type)
+			return 
+		}
+
+		batchMsg := &BatchMessage{}
+		err := proto.Unmarshal(ocMsg.Payload, batchMsg)
+		if err != nil {
+			logger.Errorf("Error unmarshaling message: %s", err)
+			return 
+		}
+
+		if req := batchMsg.GetRequest(); req != nil {
+			op.incomingChan <- batchMessage{  //req
+				msg:    ocMsg,
+				sender: senderHandle,
+			}
+		} else if pbftMsg := batchMsg.GetPbftMessage(); pbftMsg != nil {
+			senderID, err := getValidatorID(senderHandle) // who sent this?
+			if err != err {
+				panic("Cannot map sender's PeerID to a valid replica ID")
+			}
+			msg := &Message{}
+			err = proto.Unmarshal(pbftMsg, msg)
+			if err != nil {
+				logger.Errorf("Error unpacking payload from message: %s", err)
+				return 
+			}
+			op.externalEventReceiver.manager.Queue() <- pbftMessageEvent{ //pbft msg
+				msg:    msg,
+				sender: senderID,
+			}	
+			return
+		}
+		logger.Errorf("Unknown request: %+v", batchMsg)
+	}
+	return
 }
 
 func (op *obcBatch) handleChannels() {
@@ -445,9 +487,9 @@ func (op *obcBatch) processMessageNew(ocMsg *pb.Message, senderHandle *pb.PeerID
 	if ocMsg.Type == pb.Message_CHAIN_TRANSACTION {
 		req := op.txToReq(ocMsg.Payload)
 		op.broadcastMsg(&BatchMessage{Payload: &BatchMessage_Request{Request: req}})
-		return submitBatch(req)
-		
+		return submitBatch(req)	
 	}
+
 	if ocMsg.Type != pb.Message_CONSENSUS {
 		logger.Errorf("Unexpected message type: %s", ocMsg.Type)
 		return nil
@@ -466,26 +508,9 @@ func (op *obcBatch) processMessageNew(ocMsg *pb.Message, senderHandle *pb.PeerID
 			return nil
 		}
 		return submitBatch(req)
-
-	} else if pbftMsg := batchMsg.GetPbftMessage(); pbftMsg != nil {
-		senderID, err := getValidatorID(senderHandle) // who sent this?
-		if err != nil {
-			panic("Cannot map sender's PeerID to a valid replica ID")
-		}
-		msg := &Message{}
-		err = proto.Unmarshal(pbftMsg, msg)
-		if err != nil {
-			logger.Errorf("Error unpacking payload from message: %s", err)
-			return nil
-		}
-		return pbftMessageEvent{
-			msg:    msg,
-			sender: senderID,
-		}
+	} else{
+		logger.Errorf("Unexpected message type: %s", ocMsg.Type)
 	}
-
-	logger.Errorf("Unknown request: %+v", batchMsg)
-
 	return nil
 }
 
