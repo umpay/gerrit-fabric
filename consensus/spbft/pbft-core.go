@@ -1018,7 +1018,7 @@ func (instance *spbftCore) Checkpoint(seqNo uint64, id []byte) {
 func (instance *spbftCore) delReqBatch(){
 	logger.Testf("Replica %d delete not used ReqBatch")
 	for k,v := range instance.reqBatchStore{
-		if instance.view >= 2 && v.view < instance.view - 2 {
+		if instance.view >= 10 && v.view < instance.view - 10 {
 			delete(instance.reqBatchStore,k)
 			instance.persistDelRequestBatch(k)
 			logger.Testf("----delete--Replica %d  curV:%d v:%d h:%s",instance.id,instance.view,v.view,k)
