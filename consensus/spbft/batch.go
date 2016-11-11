@@ -38,13 +38,17 @@ type obcBatch struct {
 
 	batchSize        int
 	batchStore       []*Request
-	batchTimer       events.Timer
+	//batchTimer       events.Timer
 	batchTimerActive bool
 	batchTimeout     time.Duration
 
 	manager events.Manager // TODO, remove eventually, the event manager
 
-	incomingChan chan *batchMessage // Queues messages for processing by main thread
+	bTimer    *time.Timer   //create batch timer
+	incomingChan chan batchMessage // Queues messages for processing by main thread
+
+	deduplicatorChan chan lastExecTime  //update lastExecTime chan
+
 	idleChan     chan struct{}      // Idle channel, to be removed
 
 	reqStore *requestStore // Holds the outstanding and pending requests
@@ -59,10 +63,23 @@ type batchMessage struct {
 	sender *pb.PeerID
 }
 
+type batch struct {  
+	requests  []*Request
+}
+
+type lastExecTime struct {
+	id 			 uint64
+	lastExecTime time.Time
+}
+
 // Event types
 
 // batchMessageEvent is sent when a consensus message is received that is then to be sent to pbft
 type batchMessageEvent batchMessage
+
+//create new batch
+type batchEvent batch  
+
 
 // batchTimerEvent is sent when the batch timer expires
 type batchTimerEvent struct{}
@@ -105,9 +122,11 @@ func newObcBatch(id uint64, config *viper.Viper, stack consensus.Stack) *obcBatc
 		logger.Warningf("Configured null request timeout must be greater than request timeout, setting to %v", op.pbft.nullRequestTimeout)
 	}
 
-	op.incomingChan = make(chan *batchMessage)
+	op.incomingChan = make(chan batchMessage,op.batchSize)  //chan cache is a block size
 
-	op.batchTimer = etf.CreateTimer()
+	op.deduplicatorChan = make(chan lastExecTime,10) //chan cache is 10
+	
+	//op.batchTimer = etf.CreateTimer()
 
 	op.reqStore = newRequestStore()
 
@@ -116,15 +135,20 @@ func newObcBatch(id uint64, config *viper.Viper, stack consensus.Stack) *obcBatc
 	op.idleChan = make(chan struct{})
 	close(op.idleChan) // TODO remove eventually
 
+	op.bTimer = time.NewTimer(op.batchTimeout) // start timer now so we can just reset it
+	op.bTimer.Stop()
+	//Create a thread to accept the transaction
+	go op.handleChannels() 
+
 	return op
 }
 
 // Close tells us to release resources we are holding
 func (op *obcBatch) Close() {
-	op.batchTimer.Halt()
+	//op.batchTimer.Halt()
 	op.pbft.close()
 }
-
+/*
 func (op *obcBatch) submitToLeader(req *Request) events.Event {
 	// Broadcast the request to the network, in case we're in the wrong view
 	op.broadcastMsg(&BatchMessage{Payload: &BatchMessage_Request{Request: req}})
@@ -136,7 +160,7 @@ func (op *obcBatch) submitToLeader(req *Request) events.Event {
 	}
 	return nil
 }
-
+*/
 func (op *obcBatch) broadcastMsg(msg *BatchMessage) {
 	msgPayload, _ := proto.Marshal(msg)
 	ocMsg := &pb.Message{
@@ -186,6 +210,7 @@ func (op *obcBatch) verify(senderID uint64, signature []byte, message []byte) er
 // execute an opaque request which corresponds to an OBC Transaction
 func (op *obcBatch) execute(seqNo uint64, reqBatch *RequestBatch) {
 	var txs []*pb.Transaction
+	var execTime lastExecTime
 	for _, req := range reqBatch.GetBatch() {
 		tx := &pb.Transaction{}
 		if err := proto.Unmarshal(req.Payload, tx); err != nil {
@@ -197,8 +222,15 @@ func (op *obcBatch) execute(seqNo uint64, reqBatch *RequestBatch) {
 			logger.Debugf("Batch replica %d missing transaction %s outstanding=%v, pending=%v", op.pbft.id, tx.Txid, outstanding, pending)
 		}
 		txs = append(txs, tx)
-		op.deduplicator.Execute(req)
+
+		reqTime := time.Unix(req.Timestamp.Seconds, int64(req.Timestamp.Nanos))
+		if reqTime.After(execTime.lastExecTime) {
+			execTime.lastExecTime = reqTime //Update request time
+			execTime.id = req.ReplicaId
+		}
 	}
+	op.deduplicatorChan <- execTime
+
 	meta, _ := proto.Marshal(&Metadata{seqNo})
 	logger.Debugf("Batch replica %d received exec for seqNo %d containing %d transactions", op.pbft.id, seqNo, len(txs))
 	op.stack.Execute(meta, txs) // This executes in the background, we will receive an executedEvent once it completes
@@ -207,7 +239,7 @@ func (op *obcBatch) execute(seqNo uint64, reqBatch *RequestBatch) {
 // =============================================================================
 // functions specific to batch mode
 // =============================================================================
-
+/*
 func (op *obcBatch) leaderProcReq(req *Request) events.Event {
 	// XXX check req sig
 	digest := hash(req)
@@ -238,7 +270,7 @@ func (op *obcBatch) sendBatch() events.Event {
 	logger.Infof("Creating batch with %d requests", len(reqBatch.Batch))
 	return reqBatch
 }
-
+*/
 func (op *obcBatch) txToReq(tx []byte) *Request {
 	now := time.Now()
 	req := &Request{
@@ -252,7 +284,7 @@ func (op *obcBatch) txToReq(tx []byte) *Request {
 	// XXX sign req
 	return req
 }
-
+/*
 func (op *obcBatch) processMessage(ocMsg *pb.Message, senderHandle *pb.PeerID) events.Event {
 	if ocMsg.Type == pb.Message_CHAIN_TRANSACTION {
 		req := op.txToReq(ocMsg.Payload)
@@ -305,7 +337,7 @@ func (op *obcBatch) processMessage(ocMsg *pb.Message, senderHandle *pb.PeerID) e
 
 	return nil
 }
-
+*/
 func (op *obcBatch) logAddTxFromRequest(req *Request) {
 	if logger.IsEnabledFor(logging.DEBUG) {
 		// This is potentially a very large expensive debug statement, guard
@@ -325,19 +357,155 @@ func (op *obcBatch) resubmitOutstandingReqs() events.Event {
 	// If we are the primary, and know of outstanding requests, submit them for inclusion in the next batch until
 	// we run out of requests, or a new batch message is triggered (this path will re-enter after execution)
 	// Do not enter while an execution is in progress to prevent duplicating a request
-	if op.pbft.primary(op.pbft.view) == op.pbft.id && op.pbft.activeView && op.pbft.currentExec == nil {
-		needed := op.batchSize - len(op.batchStore)
+	if op.pbft.primary(op.pbft.view) == op.pbft.id && op.pbft.IsSendBatch() && op.pbft.currentExec == nil {
+		//needed := op.batchSize- len(op.batchStore)
+		needed := op.batchSize //
 
 		for op.reqStore.hasNonPending() {
 			outstanding := op.reqStore.getNextNonPending(needed)
-
+			op.reqStore.storePendings(outstanding)
+			requestBatch :=&RequestBatch{Batch: outstanding}
+			logger.Infof("Replica %d resubmit batch size:%d",op.pbft.id,len(outstanding))
+			op.manager.Inject(requestBatch)
+			/*
 			// If we have enough outstanding requests, this will trigger a batch
 			for _, nreq := range outstanding {
 				if msg := op.leaderProcReq(nreq); msg != nil {
-					op.manager.Inject(msg)
+					op.manager.Inject(msg) //执行下一个批次
 				}
-			}
+			}*/
 		}
+	}
+	return nil
+}
+
+func (op *obcBatch) sendBatchNew(reason string) events.Event {
+	op.bTimer.Stop()
+	op.batchTimerActive = false
+	if len(op.batchStore) == 0 {
+		logger.Errorf("Replica %d Told to send an empty batch store for ordering, ignoring",op.pbft.id)
+		return nil
+	}
+
+	reqBatch := &batchEvent{requests: op.batchStore}
+	op.batchStore = nil
+	logger.Infof("Replica %d Creating batch %s with %d requests",op.pbft.id,reason,len(reqBatch.requests))
+	return reqBatch
+}
+
+func (op *obcBatch) RecvMsg(ocMsg *pb.Message, senderHandle *pb.PeerID) error {
+	op.distributeMsg(ocMsg,senderHandle)
+	return nil
+}
+
+func (op *obcBatch) distributeMsg(ocMsg *pb.Message, senderHandle *pb.PeerID) {
+	if ocMsg.Type == pb.Message_CHAIN_TRANSACTION {
+		op.incomingChan <- batchMessage{  //tx
+			msg:    ocMsg,
+			sender: senderHandle,
+		}
+		return
+	}else{
+		if ocMsg.Type != pb.Message_CONSENSUS {
+			logger.Errorf("Unexpected message type: %s", ocMsg.Type)
+			return 
+		}
+
+		batchMsg := &BatchMessage{}
+		err := proto.Unmarshal(ocMsg.Payload, batchMsg)
+		if err != nil {
+			logger.Errorf("Error unmarshaling message: %s", err)
+			return 
+		}
+
+		if req := batchMsg.GetRequest(); req != nil {
+			op.incomingChan <- batchMessage{  //req
+				msg:    ocMsg,
+				sender: senderHandle,
+			}
+			return
+		} else if pbftMsg := batchMsg.GetPbftMessage(); pbftMsg != nil {
+			senderID, err := getValidatorID(senderHandle) // who sent this?
+			if err != err {
+				panic("Cannot map sender's PeerID to a valid replica ID")
+			}
+			msg := &Message{}
+			err = proto.Unmarshal(pbftMsg, msg)
+			if err != nil {
+				logger.Errorf("Error unpacking payload from message: %s", err)
+				return 
+			}
+			op.externalEventReceiver.manager.Queue() <- pbftMessageEvent{ //pbft msg
+				msg:    msg,
+				sender: senderID,
+			}	
+			return
+		}
+		logger.Errorf("Unknown request: %+v", batchMsg)
+	}
+	return
+}
+
+func (op *obcBatch) handleChannels() {
+	var event events.Event
+	for{
+		select {
+		case ocMsg := <-op.incomingChan:
+			event = op.processMessageNew(ocMsg.msg, ocMsg.sender)
+			if event != nil{
+				op.externalEventReceiver.manager.Queue() <-event 
+			}
+		case <-op.bTimer.C:
+			 event = op.sendBatchNew("timer expired")
+			 if event != nil{
+				op.externalEventReceiver.manager.Queue() <-event 
+			}
+		case  dp := <-op.deduplicatorChan:
+			op.deduplicator.UpdateExecTime(dp.id,dp.lastExecTime)
+		}
+	}
+}
+
+func (op *obcBatch) processMessageNew(ocMsg *pb.Message, senderHandle *pb.PeerID) events.Event {
+	submitBatch := func(req *Request) events.Event{
+		op.logAddTxFromRequest(req)
+		op.batchStore = append(op.batchStore, req)
+		if !op.batchTimerActive {
+			op.bTimer.Reset(op.batchTimeout)
+			op.batchTimerActive = true
+		}
+		if len(op.batchStore) >= op.batchSize {
+			return op.sendBatchNew("")
+		}
+		return nil
+	}
+
+	if ocMsg.Type == pb.Message_CHAIN_TRANSACTION {
+		req := op.txToReq(ocMsg.Payload)
+		op.broadcastMsg(&BatchMessage{Payload: &BatchMessage_Request{Request: req}})
+		return submitBatch(req)	
+	}
+
+	if ocMsg.Type != pb.Message_CONSENSUS {
+		logger.Errorf("Unexpected message type: %s", ocMsg.Type)
+		return nil
+	}
+
+	batchMsg := &BatchMessage{}
+	err := proto.Unmarshal(ocMsg.Payload, batchMsg)
+	if err != nil {
+		logger.Errorf("Error unmarshaling message: %s", err)
+		return nil
+	}
+
+	if req := batchMsg.GetRequest(); req != nil {
+		if !op.deduplicator.IsNew(req) {
+			logger.Warningf("Replica %d ignoring request as it is too old", op.pbft.id)
+			return nil
+		}
+		return submitBatch(req)
+	} else{
+		logger.Errorf("Unexpected message type: %s", ocMsg.Type)
 	}
 	return nil
 }
@@ -346,9 +514,21 @@ func (op *obcBatch) resubmitOutstandingReqs() events.Event {
 func (op *obcBatch) ProcessEvent(event events.Event) events.Event {
 	logger.Debugf("Replica %d batch main thread looping", op.pbft.id)
 	switch et := event.(type) {
+	/*
 	case batchMessageEvent:
 		ocMsg := et
 		return op.processMessage(ocMsg.msg, ocMsg.sender)
+	*/
+	case *batchEvent:  //new
+		req := et.requests
+		op.reqStore.storeOutstandings(req)
+		op.startTimerIfOutstandingRequests()
+		if (op.pbft.primary(op.pbft.view) == op.pbft.id) && op.pbft.IsSendBatch() {
+			op.reqStore.storePendings(req)
+			reqBatch := &RequestBatch{Batch: req}
+			return reqBatch
+		}
+	
 	case executedEvent:
 		op.stack.Commit(nil, et.tag.([]byte))
 	case committedEvent:
@@ -360,11 +540,12 @@ func (op *obcBatch) ProcessEvent(event events.Event) events.Event {
 			return res
 		}
 		return op.resubmitOutstandingReqs()
-	case batchTimerEvent:
+	/*case batchTimerEvent:
+		count[4] += 1
 		logger.Infof("Replica %d batch timer expired", op.pbft.id)
 		if op.pbft.activeView && (len(op.batchStore) > 0) {
 			return op.sendBatch()
-		}
+		}*/
 	case *Commit:
 		// TODO, this is extremely hacky, but should go away when batch and core are merged
 		res := op.pbft.ProcessEvent(event)
@@ -378,9 +559,9 @@ func (op *obcBatch) ProcessEvent(event events.Event) events.Event {
 		op.pbft.outstandingReqBatches = make(map[string]*RequestBatch)
 
 		logger.Debugf("Replica %d batch thread recognizing new view", op.pbft.id)
-		if op.batchTimerActive {
+		/*if op.batchTimerActive {
 			op.stopBatchTimer()
-		}
+		}*/
 
 		if op.pbft.skipInProgress {
 			// If we're the new primary, but we're in state transfer, we can't trust ourself not to duplicate things
@@ -422,7 +603,7 @@ func (op *obcBatch) ProcessEvent(event events.Event) events.Event {
 
 	return nil
 }
-
+/*
 func (op *obcBatch) startBatchTimer() {
 	op.batchTimer.Reset(op.batchTimeout, batchTimerEvent{})
 	logger.Debugf("Replica %d started the batch timer", op.pbft.id)
@@ -434,7 +615,7 @@ func (op *obcBatch) stopBatchTimer() {
 	logger.Debugf("Replica %d stopped the batch timer", op.pbft.id)
 	op.batchTimerActive = false
 }
-
+*/
 // Wraps a payload into a batch message, packs it and wraps it into
 // a Fabric message. Called by broadcast before transmission.
 func (op *obcBatch) wrapMessage(msgPayload []byte) *pb.Message {

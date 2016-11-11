@@ -16,7 +16,6 @@ limitations under the License.
 
 package spbft
 
-
 import "container/list"
 
 type requestContainer struct {
@@ -107,6 +106,11 @@ func newRequestStore() *requestStore {
 // storeOutstanding adds a request to the outstanding request list
 func (rs *requestStore) storeOutstanding(request *Request) {
 	rs.outstandingRequests.add(request)
+}
+
+// storeOutstanding adds a request to the outstanding request list
+func (rs *requestStore) storeOutstandings(requests []*Request) {
+	rs.outstandingRequests.adds(requests)
 }
 
 // storePending adds a request to the pending request list

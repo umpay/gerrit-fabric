@@ -340,7 +340,7 @@ func (instance *spbftCore) printInfo(desc string) {
 func (instance *spbftCore) printReqStore(){
 	s:= fmt.Sprintf("\n----showReqBatch--pri:%t id:%d  reqBatchStore:%d  outstandingReqBatches:%d\n",(instance.primary(instance.view)==instance.id) ,instance.id,len(instance.reqBatchStore),len(instance.outstandingReqBatches))
         for k,v := range instance.reqBatchStore{
-              s+= fmt.Sprintf("   -----h:%s  v:%d size:%d-\n",k,v.view,len(v.batch.GetBatch()))
+              s+= fmt.Sprintf("--h:%s v:%d size:%d-\n",k,v.view,len(v.batch.GetBatch()))
         }
     logger.Warningf(s)
 }
@@ -486,6 +486,11 @@ func (instance *spbftCore) inWV(v uint64, n uint64) bool {
 	return instance.view == v && instance.inW(n)
 }
 
+func (instance *spbftCore) IsSendBatch() bool{
+	logger.Infof("Replica %d view:%d seq:%d vcSeq:%d isSend:%t",instance.id,instance.view,instance.seqNo,instance.viewChangeSeqNo,instance.activeView)
+	return instance.activeView
+}
+
 // Given a digest/view/seq, is there an entry in the certLog?
 // If so, return it. If not, create it.
 func (instance *spbftCore) getCert(v uint64, n uint64) (cert *msgCert) {
@@ -538,11 +543,41 @@ func (instance *spbftCore) prePrepared(digest string, v uint64, n uint64) bool {
 		instance.id, v, n)
 	return false
 }
-
+//Abandoned
+/*
+func (instance *spbftCore) prepared(digest string, v uint64, n uint64) bool {
+	logger.Debugf("------prepared   error-----------------------")
+	return false
+	if !instance.prePrepared(digest, v, n) {
+		return false
+	}
+	if p, ok := instance.pset[n]; ok && p.View == v && p.BatchDigest == digest {
+		return true
+	}
+	quorum := 0
+	cert := instance.certStore[msgID{v, n}]
+	if cert == nil {
+		return false
+	}
+	for _, p := range cert.prepare {
+		if p.View == v && p.SequenceNumber == n && p.BatchDigest == digest {
+			quorum++
+		}
+	}
+	logger.Debugf("Replica %d prepare count for view=%d/seqNo=%d: %d",
+		instance.id, v, n, quorum)
+	return quorum >= instance.intersectionQuorum()-1
+}
+*/
 func (instance *spbftCore) committed(digest string, v uint64, n uint64) bool {
 	if !instance.prePrepared(digest, v, n) {
 		return false
 	}
+
+    /*
+	if !instance.prepared(digest, v, n) {
+		return false
+	}*/
 
 	quorum := 0
 	cert := instance.certStore[msgID{v, n}]
@@ -627,19 +662,10 @@ func (instance *spbftCore) recvRequestBatch(reqBatch *RequestBatch) error {
 	digest := hash(reqBatch)
 	logger.Debugf("Replica %d received request batch %s", instance.id, digest)
 
-        seqNoTmp := instance.seqNo +1
-	if !instance.inWV(instance.view, seqNoTmp) || seqNoTmp > instance.h+instance.L/2 {
-		// We don't have the necessary stable certificates to advance our watermarks
-		logger.Warningf("---recvRequestBatchxyz----Primary %d not sending batch:%s", instance.id, digest)
-		return nil
-	}
-
-	// add for ignore the batch which is  out watermakr  data: 2016.10.24  tag:ignore
-	// begin ignore
 	instance.reqBatchStore[digest] = vReqBatch{reqBatch,instance.view}
 	instance.outstandingReqBatches[digest] = reqBatch
 	instance.persistRequestBatch(digest)
-	//end ignore
+
 	if instance.activeView {
 		instance.softStartTimer(instance.requestTimeout, fmt.Sprintf("new request batch %s", digest))
 	}
@@ -699,7 +725,6 @@ func (instance *spbftCore) resubmitRequestBatches() {
 	}
 
 	var submissionOrder []*RequestBatch
-	index :=1
 outer:
 	for d, reqBatch := range instance.outstandingReqBatches {
 		for _, cert := range instance.certStore {
@@ -710,7 +735,6 @@ outer:
 		}
 		logger.Debugf("Replica %d has detected request batch %s must be resubmitted", instance.id, d)
 		submissionOrder = append(submissionOrder, reqBatch)
-		index += 1
 	}
 	
 	if len(submissionOrder) == 0 {
@@ -739,7 +763,6 @@ func (instance *spbftCore) recvPrePrepare(preprep *PrePrepare) error {
 	}
 
 	if !instance.inWV(preprep.View, preprep.SequenceNumber) {
-		logger.Errorf("recvPrePrepare not inmv id:%d recV:%d seq:%d h:%d",instance.id,preprep.View, preprep.SequenceNumber,preprep.BatchDigest)
 		if preprep.SequenceNumber != instance.h && !instance.skipInProgress {
 			logger.Warningf("Replica %d pre-prepare view different, or sequence number outside watermarks: preprep.View %d, expected.View %d, seqNo %d, low-mark %d", instance.id, preprep.View, instance.primary(instance.view), preprep.SequenceNumber, instance.h)
 		} else {
@@ -963,7 +986,7 @@ func (instance *spbftCore) Checkpoint(seqNo uint64, id []byte) {
 	idAsString := base64.StdEncoding.EncodeToString(id)
 
 	logger.Debugf("Replica %d preparing checkpoint for view=%d/seqNo=%d and b64 id of %s",
-		instance.id, instance.view, seqNo, idAsString)		
+		instance.id, instance.view, seqNo, idAsString)
 
 	chkpt := &Checkpoint{
 		SequenceNumber: seqNo,
@@ -977,13 +1000,13 @@ func (instance *spbftCore) Checkpoint(seqNo uint64, id []byte) {
 	instance.innerBroadcast(&Message{Payload: &Message_Checkpoint{Checkpoint: chkpt}})
 }
 
-func (instance *spbftCore) delReqBatch(){
-	logger.Infof("Replica %d delete not used ReqBatch",instance.id)
+func (instance *spbftCore) delReqBatch(){	
+	var size uint64 = 10
 	for k,v := range instance.reqBatchStore{
-		if instance.view >=4 && v.view < instance.view - 4{
+		if instance.view >= size && v.view < instance.view - size {
 			delete(instance.reqBatchStore,k)
 			instance.persistDelRequestBatch(k)
-			logger.Warningf("----delete--Replica %d  curV:%d v:%d h:%s",instance.id,instance.view,v.view,k)
+			logger.Warningf("Replica %d delete not used ReqBatch curV:%d v:%d h:%s",instance.id,instance.view,v.view,k)
 		}
 	}
 }
@@ -1014,7 +1037,6 @@ func (instance *spbftCore) moveWatermarks(n uint64) {
 		if idx.n <= h {
 			logger.Debugf("Replica %d cleaning quorum certificate for view=%d/seqNo=%d",
 				instance.id, idx.v, idx.n)
-
 			instance.persistDelRequestBatch(cert.digest)
 			delete(instance.reqBatchStore, cert.digest)
 			delete(instance.certStore, idx)
@@ -1025,6 +1047,7 @@ func (instance *spbftCore) moveWatermarks(n uint64) {
 		if testChkpt.SequenceNumber <= h {
 			logger.Debugf("Replica %d cleaning checkpoint message from replica %d, seqNo %d, b64 snapshot id %s",
 				instance.id, testChkpt.ReplicaId, testChkpt.SequenceNumber, testChkpt.Id)
+
 			delete(instance.checkpointStore, testChkpt)
 		}
 	}
@@ -1116,6 +1139,7 @@ func (instance *spbftCore) witnessCheckpointWeakCert(chkpt *Checkpoint) {
 		logger.Error(err.Error())
 		return
 	}
+	
 	target := &stateUpdateTarget{
 		checkpointMessage: checkpointMessage{
 			seqNo: chkpt.SequenceNumber,
@@ -1137,7 +1161,7 @@ func (instance *spbftCore) recvCheckpoint(chkpt *Checkpoint) events.Event {
 	logger.Debugf("Replica %d received checkpoint from replica %d, seqNo %d, digest %s",
 		instance.id, chkpt.ReplicaId, chkpt.SequenceNumber, chkpt.Id)
 
-	if instance.weakCheckpointSetOutOfRange(chkpt) {
+	if instance.weakCheckpointSetOutOfRange(chkpt) {	
 		return nil
 	}
 
@@ -1150,6 +1174,7 @@ func (instance *spbftCore) recvCheckpoint(chkpt *Checkpoint) events.Event {
 		}
 		return nil
 	}
+	
 	instance.checkpointStore[*chkpt] = true
 
 	matching := 0
@@ -1205,7 +1230,7 @@ func (instance *spbftCore) recvCheckpoint(chkpt *Checkpoint) events.Event {
 	}
 
 	instance.moveWatermarks(chkpt.SequenceNumber)
-        instance.delReqBatch()
+
 	return instance.processNewView()
 }
 

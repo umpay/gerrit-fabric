@@ -165,6 +165,13 @@ func (instance *spbftCore) sendViewChange() events.Event {
 		})
 	}
 
+	// for _, p := range instance.pset {
+	// 	if p.SequenceNumber < instance.h {
+	// 		logger.Errorf("BUG! Replica %d should not have anything in our pset less than h, found %+v", instance.id, p)
+	// 	}
+	// 	vc.Pset = append(vc.Pset, p)
+	// }
+
 	for _, q := range instance.qset {
 		if q.SequenceNumber < instance.h {
 			logger.Errorf("BUG! Replica %d should not have anything in our qset less than h, found %+v", instance.id, q)
@@ -173,6 +180,9 @@ func (instance *spbftCore) sendViewChange() events.Event {
 	}
 
 	instance.sign(vc)
+
+	// logger.Infof("Replica %d sending view-change, v:%d, h:%d, |C|:%d, |P|:%d, |Q|:%d",
+	// 	instance.id, vc.View, vc.H, len(vc.Cset), len(vc.Pset), len(vc.Qset))
 
 	logger.Infof("Replica %d sending view-change, v:%d, h:%d, |C|:%d, |Q|:%d",
 		instance.id, vc.View, vc.H, len(vc.Cset), len(vc.Qset))
@@ -259,6 +269,7 @@ func (instance *spbftCore) recvViewChange(vc *ViewChange) events.Event {
 }
 
 func (instance *spbftCore) showMsgList(funcName string,seqNo uint64,vset []*ViewChange,msgList map[uint64]string){
+	//logger.Errorf("---funcName:%s",funcName)
 	var res string
 	res = fmt.Sprintf("-------------vset------------------\n----funcName:%s  seqNum:%d vsetSize:%d \n",funcName,seqNo,len(vset))
 	for i,em :=range vset{
@@ -277,7 +288,7 @@ func (instance *spbftCore) showMsgList(funcName string,seqNo uint64,vset []*View
 		res += fmt.Sprintf("-----RId:%d  ID:%d key:%d hash:%s\n",instance.id,index,k,v)
 		index +=1
 	}
-	logger.Errorf("\n--------showMsgList------ReplicaId：%d--------\n%s\n",instance.id,res)
+//	logger.Testf("\n--------showMsgList------ReplicaId：%d--------\n%s\n",instance.id,res)
 }
 
 func (instance *spbftCore) sendNewView() events.Event {
@@ -296,7 +307,7 @@ func (instance *spbftCore) sendNewView() events.Event {
 	}
 
 	msgList := instance.assignSequenceNumbers(vset, cp.SequenceNumber)
-	//instance.showMsgList("sendNewView",cp.SequenceNumber,vset,msgList)
+	instance.showMsgList("sendNewView",cp.SequenceNumber,vset,msgList)
 	if msgList == nil {
 		logger.Infof("Replica %d could not assign sequence numbers for new view", instance.id)
 		return nil
@@ -410,7 +421,7 @@ func (instance *spbftCore) processNewView() events.Event {
 	}
 
 	msgList := instance.assignSequenceNumbers(nv.Vset, cp.SequenceNumber)
-	//instance.showMsgList("processNewView",cp.SequenceNumber,nv.Vset,msgList)
+	instance.showMsgList("processNewView",cp.SequenceNumber,nv.Vset,msgList)
 	if msgList == nil {
 		logger.Warningf("Replica %d could not assign sequence numbers: %+v",
 			instance.id, instance.viewChangeStore)
@@ -527,7 +538,9 @@ func (instance *spbftCore) processNewView2(nv *NewView) events.Event {
 				BatchDigest:    d,
 				ReplicaId:      instance.id,
 			}
-
+			// cert.sentCommit = true
+			// instance.recvCommit(commit)
+			// return instance.innerBroadcast(&Message{&Message_Commit{commit}})
 			if n > instance.h {
 				cert := instance.getCert(instance.view, n)
 				cert.sentCommit = true
@@ -543,7 +556,7 @@ func (instance *spbftCore) processNewView2(nv *NewView) events.Event {
 	instance.startTimerIfOutstandingRequests()
 
 	logger.Debugf("Replica %d done cleaning view change artifacts, calling into consumer", instance.id)
-
+        instance.delReqBatch()
 	return viewChangedEvent{}
 }
 
@@ -607,6 +620,95 @@ func (instance *spbftCore) selectInitialCheckpoint(vset []*ViewChange) (checkpoi
 	return
 }
 
+// func (instance *pbftCore) assignSequenceNumbers(vset []*ViewChange, h uint64) (msgList map[uint64]string) {
+// 	msgList = make(map[uint64]string)
+
+// 	maxN := h + 1
+
+// 	// "for all n such that h < n <= h + L"
+// nLoop:
+// 	for n := h + 1; n <= h+instance.L; n++ {
+// 		// "∃m ∈ S..."
+// 		for _, m := range vset {
+// 			// "...with <n,d,v> ∈ m.P"
+// 			for _, em := range m.Pset {
+// 				quorum := 0
+// 				// "A1. ∃2f+1 messages m' ∈ S"
+// 			mpLoop:
+// 				for _, mp := range vset {
+// 					if mp.H >= n {
+// 						continue
+// 					}
+// 					// "∀<n,d',v'> ∈ m'.P"
+// 					for _, emp := range mp.Pset {
+// 						if n == emp.SequenceNumber && !(emp.View < em.View || (emp.View == em.View && emp.BatchDigest == em.BatchDigest)) {
+// 							continue mpLoop
+// 						}
+// 					}
+// 					quorum++
+// 				}
+
+// 				if quorum < instance.intersectionQuorum() {
+// 					continue
+// 				}
+
+// 				quorum = 0
+// 				// "A2. ∃f+1 messages m' ∈ S"
+// 				for _, mp := range vset {
+// 					// "∃<n,d',v'> ∈ m'.Q"
+// 					for _, emp := range mp.Qset {
+// 						if n == emp.SequenceNumber && emp.View >= em.View && emp.BatchDigest == em.BatchDigest {
+// 							quorum++
+// 						}
+// 					}
+// 				}
+
+// 				if quorum < instance.f+1 {
+// 					continue
+// 				}
+
+// 				// "then select the request with digest d for number n"
+// 				msgList[n] = em.BatchDigest
+// 				maxN = n
+
+// 				continue nLoop
+// 			}
+// 		}
+
+// 		quorum := 0
+// 		// "else if ∃2f+1 messages m ∈ S"
+// 	nullLoop:
+// 		for _, m := range vset {
+// 			// "m.P has no entry"
+// 			for _, em := range m.Pset {
+// 				if em.SequenceNumber == n {
+// 					continue nullLoop
+// 				}
+// 			}
+// 			quorum++
+// 		}
+
+// 		if quorum >= instance.intersectionQuorum() {
+// 			// "then select the null request for number n"
+// 			msgList[n] = ""
+
+// 			continue nLoop
+// 		}
+
+// 		logger.Warningf("Replica %d could not assign value to contents of seqNo %d, found only %d missing P entries", instance.id, n, quorum)
+// 		return nil
+// 	}
+
+// 	// prune top null requests
+// 	for n, msg := range msgList {
+// 		if n > maxN && msg == "" {
+// 			delete(msgList, n)
+// 		}
+// 	}
+
+// 	return
+// }
+
 func (instance *spbftCore) assignSequenceNumbers(vset []*ViewChange, h uint64) (msgList map[uint64]string) {
 	msgList = make(map[uint64]string)
 
@@ -622,6 +724,28 @@ nLoop:
 			//遍历每一个ViewChange中的Qset
 			for _, em := range m.Qset {
 				quorum := 0
+				// "A1. ∃2f+1 messages m' ∈ S"
+				// 存在2f+1个消息
+				// mpLoop:
+				// 	for _, mp := range vset {
+				// 		if mp.H >= n {
+				// 			continue
+				// 		}
+				// 		// "∀<n,d',v'> ∈ m'.P"
+				// 		// 所有
+				// 		for _, emp := range mp.Pset {
+				// 			if n == emp.SequenceNumber && !(emp.View < em.View || (emp.View == em.View && emp.BatchDigest == em.BatchDigest)) {
+				// 				continue mpLoop
+				// 			}
+				// 		}
+				// 		quorum++
+				// 	}
+
+				// 	if quorum < instance.intersectionQuorum() {
+				// 		continue
+				// 	}
+
+				// 	quorum = 0
 				// "A2. ∃f+1 messages m' ∈ S"
 				for _, mp := range vset {
 					// "∃<n,d',v'> ∈ m'.Q"
