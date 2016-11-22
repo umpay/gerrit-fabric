@@ -1000,15 +1000,23 @@ func (instance *spbftCore) Checkpoint(seqNo uint64, id []byte) {
 	instance.innerBroadcast(&Message{Payload: &Message_Checkpoint{Checkpoint: chkpt}})
 }
 
-func (instance *spbftCore) delReqBatch(){	
-	var size uint64 = 10
-	for k,v := range instance.reqBatchStore{
-		if instance.view >= size && v.view < instance.view - size {
-			delete(instance.reqBatchStore,k)
-			instance.persistDelRequestBatch(k)
-			logger.Warningf("Replica %d delete not used ReqBatch curV:%d v:%d h:%s",instance.id,instance.view,v.view,k)
-		}
-	}
+func (instance *spbftCore) delReqBatch(){
+	var size uint64 = 5
+        var mQset map[string]bool
+        mQset = make(map[string]bool)
+        for k,_ := range instance.qset{
+                mQset[k.d] = true
+        }
+        for k,v := range instance.reqBatchStore{
+                if instance.view >= size && v.view < instance.view - size {
+                        if _,ok := mQset[k];ok{
+                                continue
+                        }
+                        delete(instance.reqBatchStore,k)
+                        instance.persistDelRequestBatch(k)
+        		logger.Warningf("Replica %d delete not used ReqBatch curView:%d view:%d hash:%s",instance.id,instance.view,v.view,k)
+                }
+        }
 }
 
 func (instance *spbftCore) execDoneSync() {
