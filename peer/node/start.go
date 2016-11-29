@@ -225,6 +225,10 @@ func serve(args []string) error {
 		return err
 	}
 
+	logger.Testf("-------liaoxj---1")
+	liaoxj()
+	logger.Testf("-------liaoxj---2")
+
 	// Start the event hub server
 	if ehubGrpcServer != nil && ehubLis != nil {
 		go ehubGrpcServer.Serve(ehubLis)
@@ -268,6 +272,36 @@ func registerChaincodeSupport(chainname chaincode.ChainName, grpcServer *grpc.Se
 	system_chaincode.RegisterSysCCs()
 
 	pb.RegisterChaincodeSupportServer(grpcServer, ccSrv)
+}
+
+func liaoxj (){
+	listenAddr :="0.0.0.0:7055"
+	if "" == listenAddr {
+		logger.Debug("Listen address not specified, using peer endpoint address")
+                return
+	}
+
+	lis, err := net.Listen("tcp", listenAddr)  //liaoxj
+	if err != nil {
+		grpclog.Fatalf("Failed to listen: %v", err)
+	}
+	var opts []grpc.ServerOption
+	if comm.TLSEnabled() {
+		creds, err := credentials.NewServerTLSFromFile(viper.GetString("peer.tls.cert.file"),
+			viper.GetString("peer.tls.key.file"))
+
+		if err != nil {
+			grpclog.Fatalf("Failed to generate credentials %v", err)
+		}
+		opts = []grpc.ServerOption{grpc.Creds(creds)}
+	}
+
+	grpcServer := grpc.NewServer(opts...) 
+	pb.RegisterPeerServer(grpcServer, nil) 
+
+	if grpcServer!= nil && lis != nil{
+		go grpcServer.Serve(lis)
+	}
 }
 
 func createEventHubServer() (net.Listener, *grpc.Server, error) {

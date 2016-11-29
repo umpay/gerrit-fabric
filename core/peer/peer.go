@@ -42,6 +42,7 @@ import (
 	"github.com/hyperledger/fabric/core/ledger/statemgmt/state"
 	"github.com/hyperledger/fabric/core/util"
 	pb "github.com/hyperledger/fabric/protos"
+        "github.com/hyperledger/fabric/core/peer/channel"
 )
 
 // Peer provides interface for a peer
@@ -276,6 +277,18 @@ func NewPeerWithEngine(secHelperFunc func() crypto.Peer, engFactory EngineFactor
 
 }
 
+func NewPeerWithConsensus(p *Impl) (*channel.HanadlerManager, error){
+	if p.isValidator == false {
+		return nil,fmt.Errorf("Error not Validator peer")
+	}
+	m := p.getValidatorServer() //[]*pb.PeerEndpoint
+	server,err := channel.NewHanadlerManager(m)
+	if err != nil{
+		return nil,fmt.Errorf("Error %s",err)
+	}
+	return server,err
+}
+
 // Chat implementation of the the Chat bidi streaming RPC function
 func (p *Impl) Chat(stream pb.Peer_ChatServer) error {
 	return p.handleChat(stream.Context(), stream, false)
@@ -400,6 +413,23 @@ func (p *Impl) DeregisterHandler(messageHandler MessageHandler) error {
 	delete(p.handlerMap.m, *key)
 	peerLogger.Debugf("Deregistered handler with key: %s", key)
 	return nil
+}
+
+//new
+func (p *Impl) getValidatorServer() ([]*pb.PeerEndpoint){
+	typ := pb.PeerEndpoint_VALIDATOR
+	p.handlerMap.RLock()
+	defer p.handlerMap.RUnlock()
+	peers := []*pb.PeerEndpoint{}
+	for _, msgHandler := range p.handlerMap.m {
+		peerEndpoint, err := msgHandler.To()
+		if typ != peerEndpoint.Type ||  err != nil{
+			continue
+		}
+		peerLogger.Testf("--add -serverid: %s add:%s", peerEndpoint.GetID(),peerEndpoint.Address)
+		peers = append(peers, &peerEndpoint)
+	}
+	return peers
 }
 
 // Clone the handler map to avoid locking across SendMessage

@@ -194,6 +194,16 @@ func (l *Logger) Panicf(format string, args ...interface{}) {
 	panic(fmt.Sprintf(format, args...))
 }
 
+//Test logs a message using CRITICAL as log level.
+func (l *Logger) Test(args ...interface{}) {
+	l.log(TEST, nil, args...)
+}
+
+// Criticalf logs a message using CRITICAL as log level.
+func (l *Logger) Testf(format string, args ...interface{}) {
+	l.log(TEST, &format, args...)
+}
+
 // Critical logs a message using CRITICAL as log level.
 func (l *Logger) Critical(args ...interface{}) {
 	l.log(CRITICAL, nil, args...)
