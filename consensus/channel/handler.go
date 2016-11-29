@@ -1,15 +1,11 @@
 package channel
 import (
 	"fmt"
+	"sync"
+        "github.com/hyperledger/fabric/consensus/util"
+        pb "github.com/hyperledger/fabric/protos"
 
-	"github.com/op/go-logging"
-	"github.com/spf13/viper"
-
-	"github.com/hyperledger/fabric/consensus/helper"
-	"github.com/hyperledger/fabric/core/peer"
-	"github.com/hyperledger/fabric/consensus/util"
-
-	pb "github.com/hyperledger/fabric/protos"
+        //"github.com/op/go-logging"
 )
 
 //实现peer.go中MessageHandler接口
@@ -29,7 +25,6 @@ type ConsensusHandler struct {
 }*/
 
 type Handler struct {
-	peer.MessageHandler
 	chatMutex             sync.Mutex
 	Coordinator           MessageHandlerCoordinator
 	ChatStream            ChatStream 
@@ -41,7 +36,6 @@ func NewHandler(coord MessageHandlerCoordinator, stream ChatStream) (MessageHand
 	d := &Handler{
 		ChatStream:      stream,
 		Coordinator:     coord,
-		consenterChan    chan *util.Message
 	}
 	d.consenterChan = make(chan *util.Message, 1000)
 	go func (){
@@ -49,8 +43,8 @@ func NewHandler(coord MessageHandlerCoordinator, stream ChatStream) (MessageHand
 		for msg := range d.consenterChan { 
 			outChan <-msg
 		}
-	}
-	return d, nil
+	}()
+	return d,nil
 }
 
 // HandleMessage handles the incoming Fabric messages for the Peer
