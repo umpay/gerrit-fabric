@@ -166,8 +166,19 @@ func serve(args []string) error {
 
 	if err != nil {
 		logger.Fatalf("Failed creating new peer with handler %v", err)
-
 		return err
+	}
+	
+	var channelLis net.Listener
+	var channelGrpcServer *grpc.Server
+	if peer.ValidatorEnabled() {
+		logger.Testf("-------start--createConsensusServer----begin--------------")
+		channelLis, channelGrpcServer, err = createConsensusServer(peerServer)
+		if err1 != nil {
+			grpclog.Fatalf("Failed to create ehub server: %v", err)
+			return err
+		}
+    	logger.Testf("-------start--createConsensusServer----end--------------")
 	}
 
 	// Register the Peer server
@@ -225,9 +236,10 @@ func serve(args []string) error {
 		return err
 	}
 
-	logger.Testf("-------liaoxj---1")
-	liaoxj()
-	logger.Testf("-------liaoxj---2")
+	// Start the channel server
+	if channelGrpcServer != nil && channelLis != nil {
+		go channelGrpcServer.Serve(channelLis)
+	}
 
 	// Start the event hub server
 	if ehubGrpcServer != nil && ehubLis != nil {
@@ -274,16 +286,24 @@ func registerChaincodeSupport(chainname chaincode.ChainName, grpcServer *grpc.Se
 	pb.RegisterChaincodeSupportServer(grpcServer, ccSrv)
 }
 
-func liaoxj (){
-	listenAddr :="0.0.0.0:7055"
+func createConsensusServer (peerServer *Impl) (net.Listener, *grpc.Server, error){
+	logger.Testf("--createConsensusServer  begin---")
+
+	channelServer,err := peerServer.GetChannelWithConsensusServer()
+	if err != nil{
+		return nil,nil,err
+	}
+	
+	listenAddr := viper.GetString("peer.consensusAddress")
+	logger.Testf("Listen address :%s",listenAddr)
 	if "" == listenAddr {
-		logger.Debug("Listen address not specified, using peer endpoint address")
-                return
+		reurn nil,nil,fmt.Errorf("Error Listen address not specified, using peer endpoint address")
 	}
 
-	lis, err := net.Listen("tcp", listenAddr)  //liaoxj
+	lis, err := net.Listen("tcp", listenAddr)  
 	if err != nil {
 		grpclog.Fatalf("Failed to listen: %v", err)
+		return nil,nil,err
 	}
 	var opts []grpc.ServerOption
 	if comm.TLSEnabled() {
@@ -297,11 +317,10 @@ func liaoxj (){
 	}
 
 	grpcServer := grpc.NewServer(opts...) 
-	pb.RegisterPeerServer(grpcServer, nil) 
-
-	if grpcServer!= nil && lis != nil{
-		go grpcServer.Serve(lis)
-	}
+	
+	pb.RegisterPeerServer(grpcServer, channelServer) 	
+	logger.Testf("--createConsensusServer  end---")
+	return lis,grpcServer,nil
 }
 
 func createEventHubServer() (net.Listener, *grpc.Server, error) {

@@ -41,7 +41,7 @@ import (
 	"github.com/hyperledger/fabric/core/ledger/statemgmt/state"
 	"github.com/hyperledger/fabric/core/util"
 	pb "github.com/hyperledger/fabric/protos"
-        "github.com/hyperledger/fabric/core/peer/channel"
+	cutil "github.com/hyperledger/fabric/consensus/util"
 )
 
 // Peer provides interface for a peer
@@ -161,8 +161,10 @@ func GetLocalIP() string {
 // NewPeerClientConnectionWithAddress Returns a new grpc.ClientConn to the configured local PEER.
 func NewPeerClientConnectionWithAddress(peerAddress string) (*grpc.ClientConn, error) {
 	if comm.TLSEnabled() {
+		peerLogger.Errorf("----NewPeerClientConnectio true addr:%s",peerAddress)
 		return comm.NewClientConnectionWithAddress(peerAddress, true, true, comm.InitTLSForPeer())
 	}
+		peerLogger.Errorf("----NewPeerClientConnectio false addr:%s",peerAddress)
 	return comm.NewClientConnectionWithAddress(peerAddress, true, false, nil)
 }
 
@@ -195,6 +197,15 @@ type Impl struct {
 	discPersist    bool
 }
 
+type MessageHandlerCoordinatorC interface {
+	RegisterHandler(endpoint *pb.PeerEndpoint) error  
+	DeregisterHandler(messageHandler MessageHandler) error
+	Broadcast(*pb.Message, pb.PeerEndpoint_Type) []error
+	Unicast(*pb.Message, *pb.PeerID) error
+	GetOutChannel() chan *cutil.Message
+}
+
+
 // TransactionProccesor responsible for processing of Transactions
 type TransactionProccesor interface {
 	ProcessTransactionMsg(*pb.Message, *pb.Transaction) *pb.Response
@@ -206,6 +217,8 @@ type Engine interface {
 	// GetHandlerFactory return a handler for an accepted Chat stream
 	GetHandlerFactory() HandlerFactory
 	//GetInputChannel() (chan<- *pb.Transaction, error)
+
+	GetChannelWithConsensusServer()(*HandlerManager,error)
 }
 
 // NewPeerWithHandler returns a Peer which uses the supplied handler factory function for creating new handlers on new Chat service invocations.
@@ -276,16 +289,67 @@ func NewPeerWithEngine(secHelperFunc func() crypto.Peer, engFactory EngineFactor
 
 }
 
-func NewPeerWithConsensus(p *Impl) (*channel.HanadlerManager, error){
-	if p.isValidator == false {
-		return nil,fmt.Errorf("Error not Validator peer")
+//new
+func (p *Impl) GetChannelWithConsensusServer() (*HandlerManager,error){
+	if p.isValidator {
+		server,err := p.engine.GetChannelWithConsensusServer()
+		if err == nil{
+			return server,nil
+		}
+		return nil,err		
 	}
-	m := p.getValidatorServer() //[]*pb.PeerEndpoint
-	server,err := channel.NewHanadlerManager(m)
+	return nil,fmt.Errorf("Error current peer is not Validator peer")
+}
+/*
+//new
+func (p *Impl) GetValidatorServer() ([]*pb.PeerEndpoint){
+	typ := pb.PeerEndpoint_VALIDATOR
+	chanelAddress := viper.GetString("peer.consensusAddress")
+	channelPort := strings.Split(chanelAddress,":")[1]
+
+	peerLogger.Testf("---GetValidatorServer-serverid1: add:%s port:%s", chanelAddress,channelPort)
+	p.handlerMap.RLock()
+	defer p.handlerMap.RUnlock()
+	peers := []*pb.PeerEndpoint{}
+	peerLogger.Testf("---GetValidatorServer-handlerMap size:%d", len(p.handlerMap.m))
+	for _, msgHandler := range p.handlerMap.m {
+		peerEndpoint, err := msgHandler.To()
+	        peerLogger.Testf("---GetValidatorServer-handlerMap for-- add:%s", peerEndpoint.Address)
+		if typ != peerEndpoint.Type ||  err != nil{
+			continue
+		}
+		peerLogger.Testf("--add -serverid1: %s add:%s size:%d", peerEndpoint.GetID(),peerEndpoint.Address,len(peers))
+		newPoint :=&pb.PeerEndpoint{
+			ID:       peerEndpoint.ID,
+			Address:  fmt.Sprintf("%s:%s",strings.Split(peerEndpoint.Address,":")[0],channelPort),
+			Type:     peerEndpoint.Type,
+			PkiID:    peerEndpoint.PkiID,
+		}
+		peerLogger.Testf("--add -serverid2: %s add:%s size:%d", peerEndpoint.GetID(),newPoint.Address,len(peers))
+		peers = append(peers, newPoint)
+	}
+	return peers
+}*/
+
+func (p *Impl) RegisterHandlerToChannel(messageHandler MessageHandler){
+	peerEndpoint,err := messageHandler.To()
 	if err != nil{
-		return nil,fmt.Errorf("Error %s",err)
+		peerLogger.Debugf("Handler address is nill")
+		return
 	}
-	return server,err
+	channelPort := strings.Split(viper.GetString("peer.consensusAddress"),":")[1]
+	newPoint :=&pb.PeerEndpoint{
+			ID:       peerEndpoint.ID,
+			Address:  fmt.Sprintf("%s:%s",strings.Split(peerEndpoint.Address,":")[0],channelPort),
+			Type:     peerEndpoint.Type,
+			PkiID:    peerEndpoint.PkiID,
+	}
+	server,err := p.engine.GetChannelWithConsensusServer()
+	if err != nil{
+		peerLogger.Debugf("Service is nill")
+		return
+	}
+	server.RegisterHandler(newPoint)
 }
 
 // Chat implementation of the the Chat bidi streaming RPC function
@@ -368,7 +432,7 @@ func (p *Impl) PeersDiscovered(peersMessage *pb.PeersMessage) error {
 	return nil
 }
 
-func getHandlerKey(peerMessageHandler MessageHandler) (*pb.PeerID, error) {
+func GetHandlerKey(peerMessageHandler MessageHandler) (*pb.PeerID, error) {
 	peerEndpoint, err := peerMessageHandler.To()
 	if err != nil {
 		return &pb.PeerID{}, fmt.Errorf("Error getting messageHandler key: %s", err)
@@ -382,7 +446,8 @@ func getHandlerKeyFromPeerEndpoint(peerEndpoint *pb.PeerEndpoint) *pb.PeerID {
 
 // RegisterHandler register a MessageHandler with this coordinator
 func (p *Impl) RegisterHandler(messageHandler MessageHandler) error {
-	key, err := getHandlerKey(messageHandler)
+	p.RegisterHandlerToChannel(messageHandler) //
+	key, err := GetHandlerKey(messageHandler)
 	if err != nil {
 		return fmt.Errorf("Error registering handler: %s", err)
 	}
@@ -390,7 +455,7 @@ func (p *Impl) RegisterHandler(messageHandler MessageHandler) error {
 	defer p.handlerMap.Unlock()
 	if _, ok := p.handlerMap.m[*key]; ok == true {
 		// Duplicate, return error
-		return newDuplicateHandlerError(messageHandler)
+		return NewDuplicateHandlerError(messageHandler)
 	}
 	p.handlerMap.m[*key] = messageHandler
 	peerLogger.Debugf("registered handler with key: %s", key)
@@ -399,7 +464,7 @@ func (p *Impl) RegisterHandler(messageHandler MessageHandler) error {
 
 // DeregisterHandler deregisters an already registered MessageHandler for this coordinator
 func (p *Impl) DeregisterHandler(messageHandler MessageHandler) error {
-	key, err := getHandlerKey(messageHandler)
+	key, err := GetHandlerKey(messageHandler)
 	if err != nil {
 		return fmt.Errorf("Error deregistering handler: %s", err)
 	}
@@ -412,23 +477,6 @@ func (p *Impl) DeregisterHandler(messageHandler MessageHandler) error {
 	delete(p.handlerMap.m, *key)
 	peerLogger.Debugf("Deregistered handler with key: %s", key)
 	return nil
-}
-
-//new
-func (p *Impl) getValidatorServer() ([]*pb.PeerEndpoint){
-	typ := pb.PeerEndpoint_VALIDATOR
-	p.handlerMap.RLock()
-	defer p.handlerMap.RUnlock()
-	peers := []*pb.PeerEndpoint{}
-	for _, msgHandler := range p.handlerMap.m {
-		peerEndpoint, err := msgHandler.To()
-		if typ != peerEndpoint.Type ||  err != nil{
-			continue
-		}
-		peerLogger.Testf("--add -serverid: %s add:%s", peerEndpoint.GetID(),peerEndpoint.Address)
-		peers = append(peers, &peerEndpoint)
-	}
-	return peers
 }
 
 // Clone the handler map to avoid locking across SendMessage
