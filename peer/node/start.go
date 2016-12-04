@@ -174,7 +174,7 @@ func serve(args []string) error {
 	if peer.ValidatorEnabled() {
 		logger.Testf("-------start--createConsensusServer----begin--------------")
 		channelLis, channelGrpcServer, err = createConsensusServer(peerServer)
-		if err1 != nil {
+		if err != nil {
 			grpclog.Fatalf("Failed to create ehub server: %v", err)
 			return err
 		}
@@ -286,7 +286,7 @@ func registerChaincodeSupport(chainname chaincode.ChainName, grpcServer *grpc.Se
 	pb.RegisterChaincodeSupportServer(grpcServer, ccSrv)
 }
 
-func createConsensusServer (peerServer *Impl) (net.Listener, *grpc.Server, error){
+func createConsensusServer (peerServer *peer.Impl) (net.Listener, *grpc.Server, error){
 	logger.Testf("--createConsensusServer  begin---")
 
 	channelServer,err := peerServer.GetChannelWithConsensusServer()
@@ -297,7 +297,7 @@ func createConsensusServer (peerServer *Impl) (net.Listener, *grpc.Server, error
 	listenAddr := viper.GetString("peer.consensusAddress")
 	logger.Testf("Listen address :%s",listenAddr)
 	if "" == listenAddr {
-		reurn nil,nil,fmt.Errorf("Error Listen address not specified, using peer endpoint address")
+		return nil,nil,fmt.Errorf("Error Listen address not specified, using peer endpoint address")
 	}
 
 	lis, err := net.Listen("tcp", listenAddr)  

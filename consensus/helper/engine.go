@@ -25,7 +25,6 @@ import (
 
 	"github.com/hyperledger/fabric/consensus/controller"
 	"github.com/hyperledger/fabric/consensus/util"
-	"github.com/hyperledger/fabric/consensus/channel"
 	"github.com/hyperledger/fabric/core/chaincode"
 	pb "github.com/hyperledger/fabric/protos"
 	"golang.org/x/net/context"
@@ -102,13 +101,11 @@ func (eng *EngineImpl) setPeerEndpoint(peerEndpoint *pb.PeerEndpoint) *EngineImp
 	return eng
 }
 
-func (eng *EngineImpl) GetChannelWithConsensusServer() (server *peer.HandlerManager,error) {
+func (eng *EngineImpl) GetChannelWithConsensusServer() (*peer.HandlerManager,error) {
 	if eng.handlerMan != nil{
 		return eng.handlerMan,nil
-	}else{
-		return nil,fmt.Error("channel server is nil")
 	}
-	
+	return nil,fmt.Errorf("channel server is nil")
 }
 
 var engineOnce sync.Once
@@ -129,7 +126,7 @@ func GetEngine(coord peer.MessageHandlerCoordinator) (peer.Engine, error) {
 		engine.helper.setConsenter(engine.consenter)
 		engine.peerEndpoint, err = coord.GetPeerEndpoint()
 		engine.consensusFan = util.NewMessageFan()
-		server,err := channel.NewChannelWithConsensus()
+		server,err := peer.NewChannelWithConsensus()
 		if err == nil{
 			engine.handlerMan  = server
 		}else{

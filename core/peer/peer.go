@@ -41,7 +41,6 @@ import (
 	"github.com/hyperledger/fabric/core/ledger/statemgmt/state"
 	"github.com/hyperledger/fabric/core/util"
 	pb "github.com/hyperledger/fabric/protos"
-	cutil "github.com/hyperledger/fabric/consensus/util"
 )
 
 // Peer provides interface for a peer
@@ -196,15 +195,6 @@ type Impl struct {
 	discHelper     discovery.Discovery
 	discPersist    bool
 }
-
-type MessageHandlerCoordinatorC interface {
-	RegisterHandler(endpoint *pb.PeerEndpoint) error  
-	DeregisterHandler(messageHandler MessageHandler) error
-	Broadcast(*pb.Message, pb.PeerEndpoint_Type) []error
-	Unicast(*pb.Message, *pb.PeerID) error
-	GetOutChannel() chan *cutil.Message
-}
-
 
 // TransactionProccesor responsible for processing of Transactions
 type TransactionProccesor interface {
@@ -455,7 +445,7 @@ func (p *Impl) RegisterHandler(messageHandler MessageHandler) error {
 	defer p.handlerMap.Unlock()
 	if _, ok := p.handlerMap.m[*key]; ok == true {
 		// Duplicate, return error
-		return NewDuplicateHandlerError(messageHandler)
+		return newDuplicateHandlerError(messageHandler)
 	}
 	p.handlerMap.m[*key] = messageHandler
 	peerLogger.Debugf("registered handler with key: %s", key)

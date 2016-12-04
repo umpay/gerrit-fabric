@@ -2,6 +2,7 @@ package peer
 
 import (
 	"fmt"
+        "time"
 	"sync"
     "io"
 	"github.com/hyperledger/fabric/consensus/util"
@@ -17,9 +18,9 @@ type HandlerManager struct {
 }
 
 func NewChannelWithConsensus() (*HandlerManager,error){
-    server,err := NewHanadlerManager()
+    server,err := NewHandlerManager()
     if err != nil{
-        return nil,fmt.Error("failed to create new channel service")
+        return nil,fmt.Errorf("failed to create new channel service")
     }
     manLogger.Testf("create channel server is success")
     return server,nil
@@ -81,7 +82,7 @@ func (p *HandlerManager) addHandler(endpoint *pb.PeerEndpoint,handler MessageHan
 	if _, ok := p.handlerMap.m[id]; ok == true {
 		// Duplicate, return error
 		manLogger.Testf("-----add new Handler in map error----")
-		return NewDuplicateHandlerError(handler)
+		return newDuplicateHandlerError(handler)
 	}
 	p.handlerMap.m[id] = handler                      //------
 	manLogger.Debugf("registered handler with key: %s", id)
@@ -142,9 +143,9 @@ func (p *HandlerManager) RegisterHandler(endpoint *pb.PeerEndpoint) error  {
 	manLogger.Testf("registered handler with address %s",endpoint.Address)
 	p.handlerMap.RLock()
 	defer p.handlerMap.RUnlock()
-	if _, ok := p.handlerMap.m[endpoint.ID]; ok == true {
+	if _, ok := p.handlerMap.m[*endpoint.ID]; ok == true {
 		// Duplicate, return error
-		return NewDuplicateHandlerError(messageHandler)
+		return  fmt.Errorf("Duplicate Handler address %s",endpoint.Address )
 	}
 	go p.connectPeer(endpoint)
     return nil
