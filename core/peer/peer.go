@@ -339,7 +339,7 @@ func (p *Impl) RegisterHandlerToChannel(messageHandler MessageHandler){
 		peerLogger.Debugf("Service is nill")
 		return
 	}
-	server.RegisterHandler(newPoint)
+	server.RegisterNewHandler(newPoint)
 }
 
 // Chat implementation of the the Chat bidi streaming RPC function

@@ -121,18 +121,22 @@ func GetEngine(coord peer.MessageHandlerCoordinator) (peer.Engine, error) {
 	var err error
 	engineOnce.Do(func() {
 		engine = new(EngineImpl)
-		engine.helper = NewHelper(coord)
-		engine.consenter = controller.NewConsenter(engine.helper)
-		engine.helper.setConsenter(engine.consenter)
-		engine.peerEndpoint, err = coord.GetPeerEndpoint()
-		engine.consensusFan = util.NewMessageFan()
-		server,err := peer.NewChannelWithConsensus()
+
+		ep, err := coord.GetPeerEndpoint()
+		server,err := peer.NewChannelWithConsensus(ep)
 		if err == nil{
 			engine.handlerMan  = server
 		}else{
 			engine.handlerMan  = nil
 			logger.Errorf("Error %s",err)
 		}
+
+		engine.helper = NewHelper(coord,engine.handlerMan)
+		engine.consenter = controller.NewConsenter(engine.helper)
+		engine.helper.setConsenter(engine.consenter)
+		engine.peerEndpoint, err = coord.GetPeerEndpoint()
+		engine.consensusFan = util.NewMessageFan()
+		
 		
 		go func() {
 			logger.Debug("Starting up message thread for consenter")

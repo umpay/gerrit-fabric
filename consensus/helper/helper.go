@@ -37,6 +37,7 @@ import (
 type Helper struct {
 	consenter    consensus.Consenter
 	coordinator  peer.MessageHandlerCoordinator
+	coordinatorC  peer.MessageHandlerCoordinatorC
 	secOn        bool
 	valid        bool // Whether we believe the state is up to date
 	secHelper    crypto.Peer
@@ -48,9 +49,10 @@ type Helper struct {
 }
 
 // NewHelper constructs the consensus helper object
-func NewHelper(mhc peer.MessageHandlerCoordinator) *Helper {
+func NewHelper(mhc peer.MessageHandlerCoordinator,coordC peer.MessageHandlerCoordinatorC) *Helper {
 	h := &Helper{
 		coordinator: mhc,
+		coordinatorC: coordC,
 		secOn:       viper.GetBool("security.enabled"),
 		secHelper:   mhc.GetSecHelper(),
 		valid:       true, // Assume our state is consistent until we are told otherwise, TODO: revisit
@@ -107,6 +109,13 @@ func (h *Helper) GetNetworkHandles() (self *pb.PeerID, network []*pb.PeerID, err
 
 // Broadcast sends a message to all validating peers
 func (h *Helper) Broadcast(msg *pb.Message, peerType pb.PeerEndpoint_Type) error {
+	logger.Errorf("--Broadcast NEW--- broadcast successfully----BEGIN---")
+	errors1 := h.coordinatorC.Broadcast(msg, peerType)
+	if len(errors1) > 0 {
+		logger.Errorf("--Broadcast NEW--ERROR-broadcast error")
+	}
+	logger.Errorf("--Broadcast NEW--- broadcast successfully----END---")
+
 	errors := h.coordinator.Broadcast(msg, peerType)
 	if len(errors) > 0 {
 		return fmt.Errorf("Couldn't broadcast successfully")
@@ -116,6 +125,10 @@ func (h *Helper) Broadcast(msg *pb.Message, peerType pb.PeerEndpoint_Type) error
 
 // Unicast sends a message to a specified receiver
 func (h *Helper) Unicast(msg *pb.Message, receiverHandle *pb.PeerID) error {
+	logger.Errorf("--Unicast NEW--- Unicast BEGIN-- to %v",receiverHandle)
+	ERR := h.coordinatorC.Unicast(msg, receiverHandle)
+	logger.Errorf("--Unicast NEW--- Unicast END--err:%s",ERR)
+
 	return h.coordinator.Unicast(msg, receiverHandle)
 }
 
