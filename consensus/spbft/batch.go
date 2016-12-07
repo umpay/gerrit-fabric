@@ -148,33 +148,22 @@ func (op *obcBatch) Close() {
 	//op.batchTimer.Halt()
 	op.pbft.close()
 }
-/*
-func (op *obcBatch) submitToLeader(req *Request) events.Event {
-	// Broadcast the request to the network, in case we're in the wrong view
-	op.broadcastMsg(&BatchMessage{Payload: &BatchMessage_Request{Request: req}})
-	op.logAddTxFromRequest(req)
-	op.reqStore.storeOutstanding(req)
-	op.startTimerIfOutstandingRequests()
-	if op.pbft.primary(op.pbft.view) == op.pbft.id && op.pbft.activeView {
-		return op.leaderProcReq(req)
-	}
-	return nil
-}
-*/
-func (op *obcBatch) broadcastMsg(msg *BatchMessage) {
+
+func (op *obcBatch) broadcastRequestMsg(msg *BatchMessage) {
 	msgPayload, _ := proto.Marshal(msg)
+
 	ocMsg := &pb.Message{
-		Type:    pb.Message_CONSENSUS,
+		Type:    pb.Message_REQUEST,
 		Payload: msgPayload,
 	}
 	op.broadcaster.Broadcast(ocMsg)
 }
 
 // send a message to a specific replica
-func (op *obcBatch) unicastMsg(msg *BatchMessage, receiverID uint64) {
+func (op *obcBatch) unicastRequestMsg(msg *BatchMessage, receiverID uint64) {
 	msgPayload, _ := proto.Marshal(msg)
 	ocMsg := &pb.Message{
-		Type:    pb.Message_CONSENSUS,
+		Type:    pb.Message_REQUEST,
 		Payload: msgPayload,
 	}
 	op.broadcaster.Unicast(ocMsg, receiverID)
@@ -239,38 +228,7 @@ func (op *obcBatch) execute(seqNo uint64, reqBatch *RequestBatch) {
 // =============================================================================
 // functions specific to batch mode
 // =============================================================================
-/*
-func (op *obcBatch) leaderProcReq(req *Request) events.Event {
-	// XXX check req sig
-	digest := hash(req)
-	logger.Debugf("Batch primary %d queueing new request %s", op.pbft.id, digest)
-	op.batchStore = append(op.batchStore, req)
-	op.reqStore.storePending(req)
 
-	if !op.batchTimerActive {
-		op.startBatchTimer()
-	}
-
-	if len(op.batchStore) >= op.batchSize {
-		return op.sendBatch()
-	}
-
-	return nil
-}
-
-func (op *obcBatch) sendBatch() events.Event {
-	op.stopBatchTimer()
-	if len(op.batchStore) == 0 {
-		logger.Error("Told to send an empty batch store for ordering, ignoring")
-		return nil
-	}
-
-	reqBatch := &RequestBatch{Batch: op.batchStore}
-	op.batchStore = nil
-	logger.Infof("Creating batch with %d requests", len(reqBatch.Batch))
-	return reqBatch
-}
-*/
 func (op *obcBatch) txToReq(tx []byte) *Request {
 	now := time.Now()
 	req := &Request{
@@ -284,60 +242,7 @@ func (op *obcBatch) txToReq(tx []byte) *Request {
 	// XXX sign req
 	return req
 }
-/*
-func (op *obcBatch) processMessage(ocMsg *pb.Message, senderHandle *pb.PeerID) events.Event {
-	if ocMsg.Type == pb.Message_CHAIN_TRANSACTION {
-		req := op.txToReq(ocMsg.Payload)
-		return op.submitToLeader(req)
-	}
 
-	if ocMsg.Type != pb.Message_CONSENSUS {
-		logger.Errorf("Unexpected message type: %s", ocMsg.Type)
-		return nil
-	}
-
-	batchMsg := &BatchMessage{}
-	err := proto.Unmarshal(ocMsg.Payload, batchMsg)
-	if err != nil {
-		logger.Errorf("Error unmarshaling message: %s", err)
-		return nil
-	}
-
-	if req := batchMsg.GetRequest(); req != nil {
-		if !op.deduplicator.IsNew(req) {
-			logger.Warningf("Replica %d ignoring request as it is too old", op.pbft.id)
-			return nil
-		}
-
-		op.logAddTxFromRequest(req)
-		op.reqStore.storeOutstanding(req)
-		if (op.pbft.primary(op.pbft.view) == op.pbft.id) && op.pbft.activeView {
-			return op.leaderProcReq(req)
-		}
-		op.startTimerIfOutstandingRequests()
-		return nil
-	} else if pbftMsg := batchMsg.GetPbftMessage(); pbftMsg != nil {
-		senderID, err := getValidatorID(senderHandle) // who sent this?
-		if err != nil {
-			panic("Cannot map sender's PeerID to a valid replica ID")
-		}
-		msg := &Message{}
-		err = proto.Unmarshal(pbftMsg, msg)
-		if err != nil {
-			logger.Errorf("Error unpacking payload from message: %s", err)
-			return nil
-		}
-		return pbftMessageEvent{
-			msg:    msg,
-			sender: senderID,
-		}
-	}
-
-	logger.Errorf("Unknown request: %+v", batchMsg)
-
-	return nil
-}
-*/
 func (op *obcBatch) logAddTxFromRequest(req *Request) {
 	if logger.IsEnabledFor(logging.DEBUG) {
 		// This is potentially a very large expensive debug statement, guard
@@ -367,13 +272,6 @@ func (op *obcBatch) resubmitOutstandingReqs() events.Event {
 			requestBatch :=&RequestBatch{Batch: outstanding}
 			logger.Infof("Replica %d resubmit batch size:%d",op.pbft.id,len(outstanding))
 			op.manager.Inject(requestBatch)
-			/*
-			// If we have enough outstanding requests, this will trigger a batch
-			for _, nreq := range outstanding {
-				if msg := op.leaderProcReq(nreq); msg != nil {
-					op.manager.Inject(msg) //执行下一个批次
-				}
-			}*/
 		}
 	}
 	return nil
@@ -399,7 +297,7 @@ func (op *obcBatch) RecvMsg(ocMsg *pb.Message, senderHandle *pb.PeerID) error {
 }
 
 func (op *obcBatch) distributeMsg(ocMsg *pb.Message, senderHandle *pb.PeerID) {
-	if ocMsg.Type == pb.Message_CHAIN_TRANSACTION {
+	if ocMsg.Type == pb.Message_CHAIN_TRANSACTION || ocMsg.Type == pb.Message_REQUEST{
 		op.incomingChan <- batchMessage{  //tx
 			msg:    ocMsg,
 			sender: senderHandle,
@@ -417,14 +315,8 @@ func (op *obcBatch) distributeMsg(ocMsg *pb.Message, senderHandle *pb.PeerID) {
 			logger.Errorf("Error unmarshaling message: %s", err)
 			return 
 		}
-
-		if req := batchMsg.GetRequest(); req != nil {
-			op.incomingChan <- batchMessage{  //req
-				msg:    ocMsg,
-				sender: senderHandle,
-			}
-			return
-		} else if pbftMsg := batchMsg.GetPbftMessage(); pbftMsg != nil {
+		
+		if pbftMsg := batchMsg.GetPbftMessage(); pbftMsg != nil {
 			senderID, err := getValidatorID(senderHandle) // who sent this?
 			if err != err {
 				panic("Cannot map sender's PeerID to a valid replica ID")
@@ -482,11 +374,11 @@ func (op *obcBatch) processMessageNew(ocMsg *pb.Message, senderHandle *pb.PeerID
 
 	if ocMsg.Type == pb.Message_CHAIN_TRANSACTION {
 		req := op.txToReq(ocMsg.Payload)
-		op.broadcastMsg(&BatchMessage{Payload: &BatchMessage_Request{Request: req}})
+		go op.broadcastRequestMsg(&BatchMessage{Payload: &BatchMessage_Request{Request: req}})
 		return submitBatch(req)	
 	}
 
-	if ocMsg.Type != pb.Message_CONSENSUS {
+	if ocMsg.Type != pb.Message_REQUEST {
 		logger.Errorf("Unexpected message type: %s", ocMsg.Type)
 		return nil
 	}
@@ -514,11 +406,6 @@ func (op *obcBatch) processMessageNew(ocMsg *pb.Message, senderHandle *pb.PeerID
 func (op *obcBatch) ProcessEvent(event events.Event) events.Event {
 	logger.Debugf("Replica %d batch main thread looping", op.pbft.id)
 	switch et := event.(type) {
-	/*
-	case batchMessageEvent:
-		ocMsg := et
-		return op.processMessage(ocMsg.msg, ocMsg.sender)
-	*/
 	case *batchEvent:  //new
 		req := et.requests
 		op.reqStore.storeOutstandings(req)
@@ -540,12 +427,7 @@ func (op *obcBatch) ProcessEvent(event events.Event) events.Event {
 			return res
 		}
 		return op.resubmitOutstandingReqs()
-	/*case batchTimerEvent:
-		count[4] += 1
-		logger.Infof("Replica %d batch timer expired", op.pbft.id)
-		if op.pbft.activeView && (len(op.batchStore) > 0) {
-			return op.sendBatch()
-		}*/
+	
 	case *Commit:
 		// TODO, this is extremely hacky, but should go away when batch and core are merged
 		res := op.pbft.ProcessEvent(event)
@@ -559,9 +441,6 @@ func (op *obcBatch) ProcessEvent(event events.Event) events.Event {
 		op.pbft.outstandingReqBatches = make(map[string]*RequestBatch)
 
 		logger.Debugf("Replica %d batch thread recognizing new view", op.pbft.id)
-		/*if op.batchTimerActive {
-			op.stopBatchTimer()
-		}*/
 
 		if op.pbft.skipInProgress {
 			// If we're the new primary, but we're in state transfer, we can't trust ourself not to duplicate things
@@ -603,19 +482,7 @@ func (op *obcBatch) ProcessEvent(event events.Event) events.Event {
 
 	return nil
 }
-/*
-func (op *obcBatch) startBatchTimer() {
-	op.batchTimer.Reset(op.batchTimeout, batchTimerEvent{})
-	logger.Debugf("Replica %d started the batch timer", op.pbft.id)
-	op.batchTimerActive = true
-}
 
-func (op *obcBatch) stopBatchTimer() {
-	op.batchTimer.Stop()
-	logger.Debugf("Replica %d stopped the batch timer", op.pbft.id)
-	op.batchTimerActive = false
-}
-*/
 // Wraps a payload into a batch message, packs it and wraps it into
 // a Fabric message. Called by broadcast before transmission.
 func (op *obcBatch) wrapMessage(msgPayload []byte) *pb.Message {

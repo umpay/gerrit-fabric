@@ -58,7 +58,6 @@ func (d *ChanHandler) HandleMessage(msg *pb.Message) error {
 				Msg:    msg,
 				Sender: senderPE.ID,
 			}:
-			logger.Testf("HandleMessage recv msg from %s",senderPE.Address)
 			return nil
 		default:
 			err:= fmt.Errorf("Message channel for %v full, rejecting", senderPE.ID)
@@ -100,13 +99,11 @@ func (d *ChanHandler) HandleMessage(msg *pb.Message) error {
 }
 
 func (d *ChanHandler) SendMessage(msg *pb.Message) error {
-	logger.Testf("----SendMessage----- ")
 	//make sure Sends are serialized. Also make sure everyone uses SendMessage
 	//instead of calling Send directly on the grpc stream
 	d.chatMutex.Lock()
 	defer d.chatMutex.Unlock()
-	logger.Debugf("Sending message to stream of type: %s ", msg.Type)
-	logger.Testf("Sending message to stream of type: %s ", msg.Type)
+	logger.Debugf("Sendding message to stream of type: %s  to:%v", msg.Type,d.ToPeerEndpoint.ID)
 	err := d.ChatStream.Send(msg)
 	if err != nil {
 		return fmt.Errorf("Error Sending message through ChatStream: %s", err)

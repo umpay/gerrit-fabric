@@ -80,7 +80,7 @@ func NewConsensusHandler(coord peer.MessageHandlerCoordinator,
 
 // HandleMessage handles the incoming Fabric messages for the Peer
 func (handler *ConsensusHandler) HandleMessage(msg *pb.Message) error {
-	if msg.Type == pb.Message_CONSENSUS {
+	if msg.Type == pb.Message_REQUEST {
 		senderPE, _ := handler.To()
 		select {
 		case handler.consenterChan <- &util.Message{

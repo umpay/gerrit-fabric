@@ -39,17 +39,11 @@ func NewHandlerManager (selfPoint *pb.PeerEndpoint) (handler *HandlerManager, er
 	manLogger.Errorf("--create NewHandlerManager begin")
 	handler = new(HandlerManager)
 	handler.handlerMap = &handlerMap{m: make(map[pb.PeerID]MessageHandler)}
-	handler.outChan = make(chan *util.Message)
+	handler.outChan = make(chan *util.Message,1000)
 	if selfPoint == nil{
 		return nil,fmt.Errorf("self Point is nill")
 	}
 	handler.peerEndpoint = selfPoint
-
-	go func(){   //--------
-		for msg := range handler.outChan { 
-	           manLogger.Testf("----self:%v recv new  Msg from : %v  mapsize:%d",selfPoint.ID,msg.Sender,len(handler.handlerMap.m))
-		}
-	}()
 
 	manLogger.Errorf("--create NewHandlerManager end")
 	return handler,nil
@@ -147,7 +141,6 @@ func (p *HandlerManager) handleChat(ctx context.Context, stream ChatStream,endpo
 		p.sendHello(cHandler)  //send hello msg
 	}
 	for {
-		manLogger.Testf("read stream........")
 		in, err := stream.Recv() 
 		if err == io.EOF {
 			manLogger.Debug("Received EOF, ending Chat")
@@ -278,7 +271,6 @@ func (p *HandlerManager) Broadcast(msg *pb.Message, typ pb.PeerEndpoint_Type) []
 				errorsFromHandlers <- fmt.Errorf("Error broadcasting msg (%s) to PeerEndpoint (%s): %s", msg.Type, toPeerEndpoint, err)
 			}
 			peerLogger.Debugf("Sending %d bytes to %s took %v", len(msg.Payload), host.Address, time.Since(t1))
-			peerLogger.Errorf("--Broadcast--Sending %d bytes to %s took %v", len(msg.Payload), host.Address, time.Since(t1))
 
 		}(msgHandler)
 
@@ -308,7 +300,6 @@ func (p *HandlerManager) getMessageHandler(receiverHandle *pb.PeerID) (MessageHa
 
 // Unicast sends a message to a specific peer.
 func (p *HandlerManager) Unicast(msg *pb.Message, receiverHandle *pb.PeerID) error {
-	peerLogger.Errorf("---Unicast-receiverHandleo %v", receiverHandle)
 	msgHandler, err := p.getMessageHandler(receiverHandle)
 	if err != nil {
 		return err
@@ -318,8 +309,5 @@ func (p *HandlerManager) Unicast(msg *pb.Message, receiverHandle *pb.PeerID) err
 		toPeerEndpoint, _ := msgHandler.To()
 		return fmt.Errorf("Error unicasting msg (%s) to PeerEndpoint (%s): %s", msg.Type, toPeerEndpoint, err)
 	}
-
-	toPeerEndpoint, _ := msgHandler.To()
-	peerLogger.Errorf("---Unicast-Sending %d bytes to %s", len(msg.Payload), toPeerEndpoint.Address)
 	return nil
 }
