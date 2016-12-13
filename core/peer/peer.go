@@ -160,10 +160,8 @@ func GetLocalIP() string {
 // NewPeerClientConnectionWithAddress Returns a new grpc.ClientConn to the configured local PEER.
 func NewPeerClientConnectionWithAddress(peerAddress string) (*grpc.ClientConn, error) {
 	if comm.TLSEnabled() {
-		peerLogger.Errorf("----NewPeerClientConnectio true addr:%s",peerAddress)
 		return comm.NewClientConnectionWithAddress(peerAddress, true, true, comm.InitTLSForPeer())
 	}
-		peerLogger.Errorf("----NewPeerClientConnectio false addr:%s",peerAddress)
 	return comm.NewClientConnectionWithAddress(peerAddress, true, false, nil)
 }
 
@@ -279,7 +277,6 @@ func NewPeerWithEngine(secHelperFunc func() crypto.Peer, engFactory EngineFactor
 
 }
 
-//new
 func (p *Impl) GetChannelWithConsensusServer() (*HandlerManager,error){
 	if p.isValidator {
 		server,err := p.engine.GetChannelWithConsensusServer()
@@ -290,36 +287,6 @@ func (p *Impl) GetChannelWithConsensusServer() (*HandlerManager,error){
 	}
 	return nil,fmt.Errorf("Error current peer is not Validator peer")
 }
-/*
-//new
-func (p *Impl) GetValidatorServer() ([]*pb.PeerEndpoint){
-	typ := pb.PeerEndpoint_VALIDATOR
-	chanelAddress := viper.GetString("peer.consensusAddress")
-	channelPort := strings.Split(chanelAddress,":")[1]
-
-	peerLogger.Testf("---GetValidatorServer-serverid1: add:%s port:%s", chanelAddress,channelPort)
-	p.handlerMap.RLock()
-	defer p.handlerMap.RUnlock()
-	peers := []*pb.PeerEndpoint{}
-	peerLogger.Testf("---GetValidatorServer-handlerMap size:%d", len(p.handlerMap.m))
-	for _, msgHandler := range p.handlerMap.m {
-		peerEndpoint, err := msgHandler.To()
-	        peerLogger.Testf("---GetValidatorServer-handlerMap for-- add:%s", peerEndpoint.Address)
-		if typ != peerEndpoint.Type ||  err != nil{
-			continue
-		}
-		peerLogger.Testf("--add -serverid1: %s add:%s size:%d", peerEndpoint.GetID(),peerEndpoint.Address,len(peers))
-		newPoint :=&pb.PeerEndpoint{
-			ID:       peerEndpoint.ID,
-			Address:  fmt.Sprintf("%s:%s",strings.Split(peerEndpoint.Address,":")[0],channelPort),
-			Type:     peerEndpoint.Type,
-			PkiID:    peerEndpoint.PkiID,
-		}
-		peerLogger.Testf("--add -serverid2: %s add:%s size:%d", peerEndpoint.GetID(),newPoint.Address,len(peers))
-		peers = append(peers, newPoint)
-	}
-	return peers
-}*/
 
 func (p *Impl) RegisterHandlerToChannel(messageHandler MessageHandler){
 	peerEndpoint,err := messageHandler.To()
@@ -436,7 +403,9 @@ func getHandlerKeyFromPeerEndpoint(peerEndpoint *pb.PeerEndpoint) *pb.PeerID {
 
 // RegisterHandler register a MessageHandler with this coordinator
 func (p *Impl) RegisterHandler(messageHandler MessageHandler) error {
-	p.RegisterHandlerToChannel(messageHandler) //
+        if p.isValidator {
+	   p.RegisterHandlerToChannel(messageHandler) //
+	}
 	key, err := GetHandlerKey(messageHandler)
 	if err != nil {
 		return fmt.Errorf("Error registering handler: %s", err)

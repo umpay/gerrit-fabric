@@ -172,13 +172,12 @@ func serve(args []string) error {
 	var channelLis net.Listener
 	var channelGrpcServer *grpc.Server
 	if peer.ValidatorEnabled() {
-		logger.Testf("-------start--createConsensusServer----begin--------------")
 		channelLis, channelGrpcServer, err = createConsensusServer(peerServer)
 		if err != nil {
-			grpclog.Fatalf("Failed to create ehub server: %v", err)
+			grpclog.Fatalf("Failed to create channel server: %v", err)
 			return err
 		}
-    	logger.Testf("-------start--createConsensusServer----end--------------")
+		logger.Errorf("Create channel server ok")
 	}
 
 	// Register the Peer server
@@ -287,13 +286,10 @@ func registerChaincodeSupport(chainname chaincode.ChainName, grpcServer *grpc.Se
 }
 
 func createConsensusServer (peerServer *peer.Impl) (net.Listener, *grpc.Server, error){
-	logger.Testf("--createConsensusServer  begin---")
-
 	channelServer,err := peerServer.GetChannelWithConsensusServer()
 	if err != nil{
 		return nil,nil,err
 	}
-	
 	listenAddr := viper.GetString("peer.consensusAddress")
 	logger.Testf("Listen address :%s",listenAddr)
 	if "" == listenAddr {
@@ -319,7 +315,6 @@ func createConsensusServer (peerServer *peer.Impl) (net.Listener, *grpc.Server, 
 	grpcServer := grpc.NewServer(opts...) 
 	
 	pb.RegisterPeerServer(grpcServer, channelServer) 	
-	logger.Testf("--createConsensusServer  end---")
 	return lis,grpcServer,nil
 }
 

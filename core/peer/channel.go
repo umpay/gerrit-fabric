@@ -7,8 +7,6 @@ import (
     "sync"
     "io"
     "github.com/hyperledger/fabric/consensus/util"
-    cutil "github.com/hyperledger/fabric/core/util"
-    "github.com/golang/protobuf/proto"
     pb "github.com/hyperledger/fabric/protos"
     "github.com/spf13/viper"
     "golang.org/x/net/context"
@@ -16,8 +14,13 @@ import (
 )
 var manLogger = logging.MustGetLogger("handlerManager")
 
+type chanHandlerMap struct{
+	sync.RWMutex
+	m map[pb.PeerID]*ChanHandler
+}
+
 type HandlerManager struct {
-	handlerMap      *handlerMap
+	handlerMap      *chanHandlerMap
 	peerEndpoint    *pb.PeerEndpoint  //self
 	outChan 		chan *util.Message
 }
@@ -29,23 +32,20 @@ func NewChannelWithConsensus(ep *pb.PeerEndpoint) (*HandlerManager,error){
 	}
     server,err := NewHandlerManager(epoint)
     if err != nil{
-        return nil,fmt.Errorf("failed to create new channel service")
+        return nil,fmt.Errorf("failed to create new channel service error: %",err)
     }
-    manLogger.Testf("create channel server is success")
+    manLogger.Testf("create channel with consensus server is success")
     return server,nil
 }
 
 func NewHandlerManager (selfPoint *pb.PeerEndpoint) (handler *HandlerManager, err error){
-	manLogger.Errorf("--create NewHandlerManager begin")
 	handler = new(HandlerManager)
-	handler.handlerMap = &handlerMap{m: make(map[pb.PeerID]MessageHandler)}
+	handler.handlerMap = &chanHandlerMap{m: make(map[pb.PeerID]*ChanHandler)}
 	handler.outChan = make(chan *util.Message,1000)
 	if selfPoint == nil{
 		return nil,fmt.Errorf("self Point is nill")
 	}
 	handler.peerEndpoint = selfPoint
-
-	manLogger.Errorf("--create NewHandlerManager end")
 	return handler,nil
 }
 
@@ -60,85 +60,54 @@ func ChangeAddress(ep *pb.PeerEndpoint) (*pb.PeerEndpoint,error){
 			Type:     ep.Type,
 			PkiID:    ep.PkiID,
 		}
-    manLogger.Testf("---self point :id %v addr:%s addrq:%s type %s",selfPoint.ID,selfPoint.Address,ep.Address,selfPoint.Type)
     return selfPoint,nil
 }
 
-//add a new peer
+//connect a new peer
 func (p *HandlerManager) connectPeer(endpoint *pb.PeerEndpoint) error {
-	address := endpoint.Address
-	manLogger.Debugf("Initiating Chat with peer address: %s", address)
-	manLogger.Testf("Initiating Chat with peer address: %s", address)
-	conn, err := NewPeerClientConnectionWithAddress(address)
+	manLogger.Debugf("Initiating Chat with peer id: %v", endpoint.ID)
+	manLogger.Testf("Initiating Chat with peer id: %v", endpoint.ID)
+	conn, err := NewPeerClientConnectionWithAddress(endpoint.Address)
 	if err != nil {
-		manLogger.Errorf("Error creating connection to peer address %s: %s", address, err)
+		manLogger.Errorf("Error creating connection to peer id:%s: %s", endpoint.ID, err)
 		return err
 	}
-	manLogger.Testf("Connection address %s ok",address)
+	manLogger.Testf("Connection id:%v ok",endpoint.ID)
 	serverClient := pb.NewPeerClient(conn)  
 	ctx := context.Background()
 	stream, err := serverClient.Chat(ctx)  
 	if err != nil {
-		manLogger.Errorf("Error establishing chat with peer address %s: %s", address, err)
+		manLogger.Errorf("Error establishing chat with peer id:%v : %s", endpoint.ID, err)
 		return err
 	}
     
-	manLogger.Testf("Established Chat with peer address: %s", address)
-	manLogger.Debugf("Established Chat with peer address: %s", address)
+	manLogger.Testf("Established Chat with peer id: %v", endpoint.ID)
+	manLogger.Debugf("Established Chat with peer id: %v", endpoint.ID)
 	
 	err = p.handleChat(ctx,stream,endpoint)
 	stream.CloseSend() 
 	if err != nil {
-		manLogger.Errorf("Ending Chat with peer address %s due to error: %s", address, err)
+		manLogger.Errorf("Ending Chat with peer id:%v due to error: %s", endpoint.ID, err)
 		return err
 	}
 	return nil
 }
 
-func (p *HandlerManager) sendHello(handler MessageHandler) {
-	logger.Errorf("--SendHello--send helloMessage begin---")
-	if handler == nil{
-		manLogger.Errorf("handler is nil")
-	}
-	if p.peerEndpoint == nil{
-		manLogger.Errorf("self Endpoint is nil")
-		return
-	}
-	helloMessage := &pb.HelloMessage{PeerEndpoint: p.peerEndpoint}
-	data, err := proto.Marshal(helloMessage)
-	if err != nil {
-		manLogger.Errorf("Error marshalling HelloMessage: %s", err)
-		return
-	}
-	// Need to sign the Discovery Hello message
-	newDiscoveryHelloMsg := &pb.Message{Type: pb.Message_DISC_HELLO, Payload: data, Timestamp: cutil.CreateUtcTimestamp()}
-	//err = p.signMessageMutating(newDiscoveryHelloMsg)
-
-	if err := handler.SendMessage(newDiscoveryHelloMsg); err != nil {
-		manLogger.Errorf("Error creating new Peer Handler, error returned sending %s: %s", pb.Message_DISC_HELLO, err)
-		return
-	}
-	manLogger.Errorf("--SendHello--send helloMessage ok")
-}
-
 // Chat implementation of the the Chat bidi streaming RPC function
 func (p *HandlerManager) handleChat(ctx context.Context, stream ChatStream,endpoint *pb.PeerEndpoint) error {
 	deadline, ok := ctx.Deadline()
-	manLogger.Debugf("Current context deadline = %s, ok = %v address = %s", deadline, ok)
-	manLogger.Testf("Current context deadline = %s, ok = %v address = %s", deadline, ok)
-	cHandler,err := NewChanHandler(p,stream,endpoint)
-	if err != nil {
-		return fmt.Errorf("Error creating handler during ConnectPeer initiation: %s", err)
-	}
+	manLogger.Debugf("Current context deadline = %s, ok = %v", deadline, ok)
+	manLogger.Testf("Current context deadline = %s, ok = %v", deadline, ok)
+	cHandler := NewChanHandler(p,stream,endpoint)
 	defer cHandler.Stop()
-
+    var err error	
 	if endpoint != nil{
-	 	manLogger.Testf("---handleChat--..RegisterHandler ... id %v addr:%s",endpoint.ID,endpoint.Address)
 		err = p.RegisterHandler(cHandler)
 		if err != nil{
-			return fmt.Errorf("Error register failed error %s",err)
+			return err
 		}
-		p.sendHello(cHandler)  //send hello msg
+		manLogger.Testf("RegisterHandler %v add handler id %v ok",p.peerEndpoint.ID,endpoint.ID)
+		cHandler.SendHello() //send hello msg to server 
 	}
 	for {
 		in, err := stream.Recv() 
@@ -161,10 +130,12 @@ func (p *HandlerManager) handleChat(ctx context.Context, stream ChatStream,endpo
 
 func (p *HandlerManager) Chat(stream pb.Peer_ChatServer) error {
     manLogger.Testf("chat server running.......")
-	return p.handleChat(stream.Context(), stream, nil)
+    err := p.handleChat(stream.Context(), stream, nil)
+    manLogger.Errorf("----chat server Stop.......err:%s",err)
+    return err
 }
 
-func (p *HandlerManager) GetHandlerByKey(id *pb.PeerID) MessageHandler{
+func (p *HandlerManager) GetHandlerByKey(id *pb.PeerID) *ChanHandler{
 	p.handlerMap.Lock()
 	defer p.handlerMap.Unlock()    
 	if handler, ok := p.handlerMap.m[*id]; ok == true {
@@ -173,20 +144,20 @@ func (p *HandlerManager) GetHandlerByKey(id *pb.PeerID) MessageHandler{
 	return nil
 }
 
-func (p *HandlerManager) RegisterNewHandler(endpoint *pb.PeerEndpoint) error  {
-	manLogger.Testf("registered handler with address %s",endpoint.Address)
+func (p *HandlerManager) RegisterNewHandler(endpoint *pb.PeerEndpoint){
+	manLogger.Testf("registered new peer handler with id:%v",endpoint.ID)
 	p.handlerMap.RLock()
 	defer p.handlerMap.RUnlock()
 	if _, ok := p.handlerMap.m[*endpoint.ID]; ok == true {
-		// Duplicate, return error
-		return  fmt.Errorf("Duplicate Handler address %s",endpoint.Address )
+		peerLogger.Errorf("Error Duplicate Handler from %v to %v",p.peerEndpoint.ID,endpoint.ID ) 
+	}else{
+		go p.connectPeer(endpoint)
 	}
-	go p.connectPeer(endpoint)
-    return nil
+    return
 }
 
-func (p *HandlerManager) RegisterHandler(messageHandler MessageHandler) error {
-	key, err := GetHandlerKey(messageHandler)
+func (p *HandlerManager) RegisterHandler(messageHandler *ChanHandler) error {
+	key, err := GetPeerIDByHandler(messageHandler)
 	if err != nil {
 		return fmt.Errorf("Error registering handler: %s", err)
 	}
@@ -194,16 +165,17 @@ func (p *HandlerManager) RegisterHandler(messageHandler MessageHandler) error {
 	defer p.handlerMap.Unlock()
 	if _, ok := p.handlerMap.m[*key]; ok == true {
 		// Duplicate, return error
-		return newDuplicateHandlerError(messageHandler)
+		return fmt.Errorf("Error Duplicate Handler from %v to %v",p.peerEndpoint.ID,key ) 
 	}
+	messageHandler.Register()   //set true
 	p.handlerMap.m[*key] = messageHandler
 	peerLogger.Debugf("registered handler with key: %s handler size:%d",key, len(p.handlerMap.m))
 	peerLogger.Errorf("registered handler with key: %s handler size:%d", key,len(p.handlerMap.m))
 	return nil
 }
 
-func (p *HandlerManager) DeregisterHandler(messageHandler MessageHandler) error {
-	key, err := GetHandlerKey(messageHandler)
+func (p *HandlerManager) DeregisterHandler(messageHandler *ChanHandler) error {
+	key, err := GetPeerIDByHandler(messageHandler)
 	if err != nil {
 		return fmt.Errorf("Error deregistering handler: %s", err)
 	}
@@ -213,6 +185,7 @@ func (p *HandlerManager) DeregisterHandler(messageHandler MessageHandler) error 
 		// Handler NOT found
 		return fmt.Errorf("Error deregistering handler, could not find handler with key: %s", key)
 	}
+	
 	delete(p.handlerMap.m, *key)
 	manLogger.Debugf("Deregistered handler with key: %s handler size:%d", key,len(p.handlerMap.m))
 	manLogger.Errorf("Deregistered handler with key: %s handler size:%d", key,len(p.handlerMap.m))
@@ -229,14 +202,15 @@ func (p *HandlerManager) ProcessTransaction(ctx context.Context, tx *pb.Transact
 }
 
 // Clone the handler map to avoid locking across SendMessage
-func (p *HandlerManager) cloneHandlerMap(typ pb.PeerEndpoint_Type) map[pb.PeerID]MessageHandler {
+func (p *HandlerManager) cloneHandlerMap(typ pb.PeerEndpoint_Type) map[pb.PeerID]*ChanHandler {
 	if typ != pb.PeerEndpoint_VALIDATOR {
 		peerLogger.Errorf("not send msg to non validator")
 		return nil
 	}
 	p.handlerMap.RLock()
 	defer p.handlerMap.RUnlock()
-	clone := make(map[pb.PeerID]MessageHandler)
+	clone := make(map[pb.PeerID]*ChanHandler)
+        var index int
 	for id, msgHandler := range p.handlerMap.m {
 		//pb.PeerEndpoint_UNDEFINED collects all peers
 		toPeerEndpoint, _ := msgHandler.To()
@@ -244,7 +218,8 @@ func (p *HandlerManager) cloneHandlerMap(typ pb.PeerEndpoint_Type) map[pb.PeerID
 		if typ != toPeerEndpoint.Type {
 			continue
 		}
-		
+                peerLogger.Errorf("self:%v index:%d to%v registerd:%t",p.peerEndpoint.ID,index,toPeerEndpoint.ID)	
+ 		index += 1
 		clone[id] = msgHandler
 	}
 	return clone
@@ -261,7 +236,7 @@ func (p *HandlerManager) Broadcast(msg *pb.Message, typ pb.PeerEndpoint_Type) []
 
 	for _, msgHandler := range cloneMap {
 		bcWG.Add(1)
-		go func(msgHandler MessageHandler) {
+		go func(msgHandler *ChanHandler) {
 			defer bcWG.Done()
 			host, _ := msgHandler.To()
 			t1 := time.Now()
@@ -287,8 +262,19 @@ func (p *HandlerManager) Broadcast(msg *pb.Message, typ pb.PeerEndpoint_Type) []
 
 	return returnedErrors
 }
+func (p *HandlerManager) GetSelfPeerEndpoint() *pb.PeerEndpoint{
+	return p.peerEndpoint
+}
 
-func (p *HandlerManager) getMessageHandler(receiverHandle *pb.PeerID) (MessageHandler, error) {
+func GetPeerIDByHandler(peerMessageHandler *ChanHandler) (*pb.PeerID, error) {
+	peerEndpoint, err := peerMessageHandler.To()
+	if err != nil {
+		return &pb.PeerID{}, fmt.Errorf("Error getting messageHandler key: %s", err)
+	}
+	return peerEndpoint.ID, nil
+}
+
+func (p *HandlerManager) getMessageHandler(receiverHandle *pb.PeerID) (*ChanHandler, error) {
 	p.handlerMap.RLock()
 	defer p.handlerMap.RUnlock()
 	msgHandler, ok := p.handlerMap.m[*receiverHandle]
@@ -309,5 +295,6 @@ func (p *HandlerManager) Unicast(msg *pb.Message, receiverHandle *pb.PeerID) err
 		toPeerEndpoint, _ := msgHandler.To()
 		return fmt.Errorf("Error unicasting msg (%s) to PeerEndpoint (%s): %s", msg.Type, toPeerEndpoint, err)
 	}
+	peerLogger.Errorf("---Unicast02 msg Type:%s to:%v----mapsize:%d", msg.Type, receiverHandle,len(p.handlerMap.m))
 	return nil
 }

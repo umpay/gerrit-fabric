@@ -140,33 +140,20 @@ func GetEngine(coord peer.MessageHandlerCoordinator) (peer.Engine, error) {
 		
 		go func() {
 			logger.Debug("Starting up message thread for recv tx msg")
-			/*
-			// The channel never closes, so this should never break
-			for msg := range engine.consensusFan.GetOutChannel() {
-				engine.consenter.RecvMsg(msg.Msg, msg.Sender)
-			}
-			*/
 
 			for{
+				// The channel never closes, so this should never break
 				select {
 				case ocMsg := <-engine.consensusFan.GetOutChannel():
+					//recv request msg
 					engine.consenter.RecvMsg(ocMsg.Msg, ocMsg.Sender)
 			
 				case ocMsg2 := <-engine.handlerMan.GetOutChannel():
+					//recv consensus msg
 					engine.consenter.RecvMsg(ocMsg2.Msg, ocMsg2.Sender)				
 				}
 			}
 		}()
-		/*
-		go func() {
-			logger.Debug("Starting up message thread for recv consensus msg")
-
-			// The channel never closes, so this should never break
-			for msg := range engine.handlerMan.GetOutChannel() {
-				engine.consenter.RecvMsg(msg.Msg, msg.Sender)
-			}
-		}()
-		*/
 	})
 	return engine, err
 }

@@ -3,6 +3,7 @@ import (
     "fmt"
     "sync"
     "github.com/hyperledger/fabric/consensus/util"
+    cutil "github.com/hyperledger/fabric/core/util"
     pb "github.com/hyperledger/fabric/protos"
     "github.com/golang/protobuf/proto"
     "github.com/op/go-logging"
@@ -10,18 +11,18 @@ import (
 var logger = logging.MustGetLogger("ChanHandler")
 
 type MessageHandlerCoordinatorC interface {
-        RegisterHandler(messageHandler MessageHandler) error
-        DeregisterHandler(messageHandler MessageHandler) error
+        RegisterHandler(messageHandler *ChanHandler) error
+        DeregisterHandler(messageHandler *ChanHandler) error
         Broadcast(*pb.Message, pb.PeerEndpoint_Type) []error
         Unicast(*pb.Message, *pb.PeerID) error
         GetOutChannel() chan *util.Message
-        GetHandlerByKey(*pb.PeerID) MessageHandler
+        GetHandlerByKey(*pb.PeerID) *ChanHandler
+        GetSelfPeerEndpoint() *pb.PeerEndpoint
 }
 
 
 //channel handler
 type ChanHandler struct {
-	MessageHandler
 	chatMutex             sync.Mutex
 	Coordinator           MessageHandlerCoordinatorC
 	ToPeerEndpoint        *pb.PeerEndpoint
@@ -31,13 +32,13 @@ type ChanHandler struct {
 }
 
 
-func NewChanHandler(coord MessageHandlerCoordinatorC, stream ChatStream,point *pb.PeerEndpoint) (MessageHandler, error) {
+func NewChanHandler(coord MessageHandlerCoordinatorC, stream ChatStream,point *pb.PeerEndpoint) (*ChanHandler) {
 	d := &ChanHandler{
 		ChatStream:      stream,
 		Coordinator:     coord,
 		registered:  	 false,
 	}
-        d.ToPeerEndpoint = point
+    d.ToPeerEndpoint = point
 	d.consenterChan = make(chan *util.Message, 1000)
 	go func (){
 		outChan := d.Coordinator.GetOutChannel()
@@ -45,8 +46,8 @@ func NewChanHandler(coord MessageHandlerCoordinatorC, stream ChatStream,point *p
 			outChan <-msg
 		}
 	}()
-	
-	return d,nil
+
+	return d
 }
 
 // HandleMessage handles the incoming Fabric messages for the Peer
@@ -71,27 +72,28 @@ func (d *ChanHandler) HandleMessage(msg *pb.Message) error {
 			return fmt.Errorf("Error unmarshalling HelloMessage: %s", err)
 		}
 		helloPeerEndpoint :=helloMessage.PeerEndpoint
+		logger.Errorf("--HandleMessage---sendId:%v registered:%t", helloPeerEndpoint.ID,d.registered)
 		if d.registered == false{
 			handler := d.Coordinator.GetHandlerByKey(helloPeerEndpoint.ID)
 			if handler != nil{
 				//delete
 				err = d.deregister()
-				logger.Testf("Deregister handler address: %s", helloPeerEndpoint.Address)
+				if err != nil{
+					logger.Testf("Deregister handler id: %v,Error %s", helloPeerEndpoint.ID,err)
+				}else{
+					logger.Testf("Deregister handler id: %v ok", helloPeerEndpoint.ID)
+				}
 			}
 			//add			
 			d.ToPeerEndpoint = helloPeerEndpoint
-			logger.Testf("Register handler address: %s", helloPeerEndpoint.Address)
 			err = d.Coordinator.RegisterHandler(d)
 			if err != nil{
-				logger.Testf("Register handler address: %s errror %s", helloPeerEndpoint.Address,err)
+				logger.Errorf("-----Register handler id: %v registered:%t,errror %s", helloPeerEndpoint.ID,d.registered,err)
+				return err
 			}else{
-			 d.registered = true
+			    logger.Testf("Register handler id: %v registered:%t ok",helloPeerEndpoint.ID,d.registered)
 			}
-			logger.Testf("Register handler address: %s ok  d.registered:%t",helloPeerEndpoint.Address,d.registered)
-		}else{
-			logger.Testf("Register handler HAVE address: %s ok  d.registered:%t",helloPeerEndpoint.Address,d.registered)
 		}
-		
 		return err
 	}
 
@@ -118,17 +120,24 @@ func (d *ChanHandler) To() (pb.PeerEndpoint, error){
 	return *(d.ToPeerEndpoint), nil
 }
 
-func (d *ChanHandler) IsRegister() bool{
-	return d.registered
+func (d *ChanHandler) Register() {
+	d.registered = true
+
+	senderPE, _ := d.To()
+	logger.Testf("----Register handler to %v ok",senderPE.ID)
 }
 
 func (d *ChanHandler) deregister() error {
 	var err error
 	if d.registered {
 		senderPE, _ := d.To()
-		logger.Testf("deregister handler to %s ok",senderPE.Address)
 		err = d.Coordinator.DeregisterHandler(d)
-		d.registered = false
+		if err != nil{
+			logger.Errorf("deregister handler to %v,error %s",senderPE.ID,err)
+		}else{
+			d.registered = false
+			logger.Testf("deregister handler to %v ok",senderPE.ID)
+		}
 	}
 	return err
 }
@@ -136,9 +145,35 @@ func (d *ChanHandler) deregister() error {
 // Stop stops this handler, which will trigger the Deregister from the MessageHandlerCoordinator.
 func (d *ChanHandler) Stop() error {
 	// Deregister the handler
+	senderPE, _ := d.To()
+	logger.Errorf("------stop handler to %v registered :%t",senderPE.ID,d.registered)
 	err := d.deregister()
 	if err != nil {
 		return fmt.Errorf("Error stopping MessageHandler: %s", err)
 	}
+	return nil
+}
+
+
+func (d *ChanHandler) SendHello() error{
+	senderPE, _ := d.To()
+	selfPoint := d.Coordinator.GetSelfPeerEndpoint()
+	if selfPoint == nil{
+		return fmt.Errorf("self Endpoint is nil")
+	}
+	helloMessage := &pb.HelloMessage{PeerEndpoint: selfPoint}
+	data, err := proto.Marshal(helloMessage)
+	if err != nil {
+		return fmt.Errorf("Error marshalling HelloMessage: %s", err)
+	}
+	// Need to sign the Discovery Hello message
+	newDiscoveryHelloMsg := &pb.Message{Type: pb.Message_DISC_HELLO, Payload: data, Timestamp: cutil.CreateUtcTimestamp()}
+	//err = p.signMessageMutating(newDiscoveryHelloMsg)
+
+	if err := d.SendMessage(newDiscoveryHelloMsg); err != nil {
+		manLogger.Errorf("%v Send %s to %v,error %s",selfPoint.ID,pb.Message_DISC_HELLO,senderPE.ID,err)
+		return err
+	}
+	manLogger.Errorf("%v Send %s to %v ok",selfPoint.ID,pb.Message_DISC_HELLO,senderPE.ID)
 	return nil
 }
