@@ -1,6 +1,7 @@
 package peer
 import (
     "fmt"
+    "time"
     "sync"
     "github.com/hyperledger/fabric/consensus/util"
     cutil "github.com/hyperledger/fabric/core/util"
@@ -29,17 +30,19 @@ type ChanHandler struct {
 	registered            bool
 	ChatStream            ChatStream 
 	consenterChan 	      chan *util.Message
+	doneChan              chan struct{}  //new
 }
 
 
-func NewChanHandler(coord MessageHandlerCoordinatorC, stream ChatStream,point *pb.PeerEndpoint) (*ChanHandler) {
+func NewChanHandler(coord MessageHandlerCoordinatorC, stream ChatStream,point *pb.PeerEndpoint) (*ChanHandler,error) {
+	var err error
 	d := &ChanHandler{
 		ChatStream:      stream,
 		Coordinator:     coord,
 		registered:  	 false,
 	}
-    d.ToPeerEndpoint = point
 	d.consenterChan = make(chan *util.Message, 1000)
+	d.doneChan = make(chan struct{})
 	go func (){
 		outChan := d.Coordinator.GetOutChannel()
 		for msg := range d.consenterChan { 
@@ -47,7 +50,14 @@ func NewChanHandler(coord MessageHandlerCoordinatorC, stream ChatStream,point *p
 		}
 	}()
 
-	return d
+	if point != nil{
+		d.ToPeerEndpoint = point
+		err = d.SendHello()
+		if err != nil{
+			return nil,err
+		}
+	}
+	return d,err
 }
 
 // HandleMessage handles the incoming Fabric messages for the Peer
@@ -66,38 +76,59 @@ func (d *ChanHandler) HandleMessage(msg *pb.Message) error {
 			return err
 		}
 	}else if  msg.Type == pb.Message_DISC_HELLO{
+		selfPoint := d.Coordinator.GetSelfPeerEndpoint()
+		if selfPoint == nil{
+			return fmt.Errorf("self Endpoint is nil")
+		}
 		helloMessage := &pb.HelloMessage{}
 		err := proto.Unmarshal(msg.Payload, helloMessage)
 		if err != nil {
 			return fmt.Errorf("Error unmarshalling HelloMessage: %s", err)
 		}
 		helloPeerEndpoint :=helloMessage.PeerEndpoint
-		logger.Errorf("--HandleMessage---sendId:%v registered:%t", helloPeerEndpoint.ID,d.registered)
-		if d.registered == false{
-			handler := d.Coordinator.GetHandlerByKey(helloPeerEndpoint.ID)
-			if handler != nil{
-				//delete
-				err = d.deregister()
-				if err != nil{
-					logger.Testf("Deregister handler id: %v,Error %s", helloPeerEndpoint.ID,err)
-				}else{
-					logger.Testf("Deregister handler id: %v ok", helloPeerEndpoint.ID)
-				}
-			}
-			//add			
+
+		if d.registered == true{
+			logger.Warningf("%v recv msg type %s from %v,registered:%t",selfPoint.ID,pb.Message_DISC_HELLO,d.ToPeerEndpoint.ID,d.registered)
+			return nil
+		}else{
 			d.ToPeerEndpoint = helloPeerEndpoint
-			err = d.Coordinator.RegisterHandler(d)
+			err = d.SendHello()
 			if err != nil{
-				logger.Errorf("-----Register handler id: %v registered:%t,errror %s", helloPeerEndpoint.ID,d.registered,err)
 				return err
-			}else{
-			    logger.Testf("Register handler id: %v registered:%t ok",helloPeerEndpoint.ID,d.registered)
 			}
 		}
-		return err
-	}
 
+		err = d.Coordinator.RegisterHandler(d)
+		if err != nil{
+			logger.Errorf("Register handler id: %v registered:%t,errror %s", helloPeerEndpoint.ID,d.registered,err)
+			return err
+		}else{
+			d.registered = true
+		    logger.Warningf("Register handler id: %v registered:%t ok",helloPeerEndpoint.ID,d.registered)
+		    go d.start()
+		}
+		return nil
+	}
 	return fmt.Errorf("Did not handle message of type %s, passing on to next MessageHandler", msg.Type)
+}
+
+func (d *ChanHandler) start() error {
+	sendPE,_ := d.To()
+	selfPE := d.Coordinator.GetSelfPeerEndpoint()
+	tickChan := time.NewTicker(time.Second * 10).C
+	logger.Errorf("Starting Peer discovery service")
+	for {
+		select {
+		case <-tickChan:
+			if err := d.SendHello(); err != nil {
+				peerLogger.Errorf("Error sending %s from %v to %v during tick: %s", pb.Message_DISC_HELLO,selfPE.ID,sendPE.ID, err)
+				return nil
+			}
+		case <-d.doneChan:
+			peerLogger.Errorf("Stopping send hello Message from %v to %v",selfPE.ID,sendPE.ID)
+			return nil
+		}
+	}
 }
 
 func (d *ChanHandler) SendMessage(msg *pb.Message) error {
@@ -105,7 +136,7 @@ func (d *ChanHandler) SendMessage(msg *pb.Message) error {
 	//instead of calling Send directly on the grpc stream
 	d.chatMutex.Lock()
 	defer d.chatMutex.Unlock()
-	logger.Debugf("Sendding message to stream of type: %s  to:%v", msg.Type,d.ToPeerEndpoint.ID)
+	logger.Infof("Sending message to stream of type: %s to:%v", msg.Type,d.ToPeerEndpoint.ID)
 	err := d.ChatStream.Send(msg)
 	if err != nil {
 		return fmt.Errorf("Error Sending message through ChatStream: %s", err)
@@ -120,24 +151,12 @@ func (d *ChanHandler) To() (pb.PeerEndpoint, error){
 	return *(d.ToPeerEndpoint), nil
 }
 
-func (d *ChanHandler) Register() {
-	d.registered = true
-
-	senderPE, _ := d.To()
-	logger.Testf("----Register handler to %v ok",senderPE.ID)
-}
-
 func (d *ChanHandler) deregister() error {
 	var err error
 	if d.registered {
-		senderPE, _ := d.To()
 		err = d.Coordinator.DeregisterHandler(d)
-		if err != nil{
-			logger.Errorf("deregister handler to %v,error %s",senderPE.ID,err)
-		}else{
-			d.registered = false
-			logger.Testf("deregister handler to %v ok",senderPE.ID)
-		}
+		d.registered = false
+		d.doneChan <- struct{}{}
 	}
 	return err
 }
@@ -145,8 +164,6 @@ func (d *ChanHandler) deregister() error {
 // Stop stops this handler, which will trigger the Deregister from the MessageHandlerCoordinator.
 func (d *ChanHandler) Stop() error {
 	// Deregister the handler
-	senderPE, _ := d.To()
-	logger.Errorf("------stop handler to %v registered :%t",senderPE.ID,d.registered)
 	err := d.deregister()
 	if err != nil {
 		return fmt.Errorf("Error stopping MessageHandler: %s", err)
@@ -156,7 +173,10 @@ func (d *ChanHandler) Stop() error {
 
 
 func (d *ChanHandler) SendHello() error{
-	senderPE, _ := d.To()
+	senderPE, err := d.To()
+	if err != nil{
+		return fmt.Errorf("ToPeerEndpoint is nil")
+	}
 	selfPoint := d.Coordinator.GetSelfPeerEndpoint()
 	if selfPoint == nil{
 		return fmt.Errorf("self Endpoint is nil")
@@ -174,6 +194,5 @@ func (d *ChanHandler) SendHello() error{
 		manLogger.Errorf("%v Send %s to %v,error %s",selfPoint.ID,pb.Message_DISC_HELLO,senderPE.ID,err)
 		return err
 	}
-	manLogger.Errorf("%v Send %s to %v ok",selfPoint.ID,pb.Message_DISC_HELLO,senderPE.ID)
 	return nil
 }
