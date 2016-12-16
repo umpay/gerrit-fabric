@@ -30,7 +30,7 @@ type ChanHandler struct {
 	registered            bool
 	ChatStream            ChatStream 
 	consenterChan 	      chan *util.Message
-	doneChan              chan struct{}  //new
+	doneChan              chan struct{}  
 }
 
 
@@ -45,8 +45,17 @@ func NewChanHandler(coord MessageHandlerCoordinatorC, stream ChatStream,point *p
 	d.doneChan = make(chan struct{})
 	go func (){
 		outChan := d.Coordinator.GetOutChannel()
-		for msg := range d.consenterChan { 
-			outChan <-msg
+		for {
+			select {
+			case msg := <- d.consenterChan:
+				outChan <-msg
+
+			case <-d.doneChan:
+				sendPE,_ := d.To()
+				selfPE := d.Coordinator.GetSelfPeerEndpoint()
+				peerLogger.Errorf("Stopping recv Message from %v to %v",selfPE.ID,sendPE.ID)
+				return 
+			}
 		}
 	}()
 
@@ -112,22 +121,18 @@ func (d *ChanHandler) HandleMessage(msg *pb.Message) error {
 	return fmt.Errorf("Did not handle message of type %s, passing on to next MessageHandler", msg.Type)
 }
 
-func (d *ChanHandler) start() error {
+func (d *ChanHandler) start() {
 	sendPE,_ := d.To()
 	selfPE := d.Coordinator.GetSelfPeerEndpoint()
 	tickChan := time.NewTicker(time.Second * 10).C
-	logger.Errorf("Starting Peer discovery service")
+	logger.Warningf("Starting send hello Message service")
 	for {
-		select {
-		case <-tickChan:
-			if err := d.SendHello(); err != nil {
-				peerLogger.Errorf("Error sending %s from %v to %v during tick: %s", pb.Message_DISC_HELLO,selfPE.ID,sendPE.ID, err)
-				return nil
-			}
-		case <-d.doneChan:
-			peerLogger.Errorf("Stopping send hello Message from %v to %v",selfPE.ID,sendPE.ID)
-			return nil
-		}
+	       <-tickChan
+	      if err := d.SendHello(); err != nil {
+	          peerLogger.Errorf("Error sending %s from %v to %v during tick: %s", pb.Message_DISC_HELLO,selfPE.ID,sendPE.ID, err)
+                  peerLogger.Errorf("Stopping send hello Message from %v to %v",selfPE.ID,sendPE.ID)
+                  return
+	      }
 	}
 }
 

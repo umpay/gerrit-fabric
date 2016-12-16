@@ -21,9 +21,10 @@ type chanHandlerMap struct{
 }
 
 type HandlerManager struct {
-	handlerMap      *chanHandlerMap
-	peerEndpoint    *pb.PeerEndpoint  //self
-	outChan 		chan *util.Message
+	handlerMap      *chanHandlerMap  			 //connected peers
+	unHandlerMap	map[pb.PeerID]*pb.PeerEndpoint   //Not connected peers
+	peerEndpoint    *pb.PeerEndpoint    		//self 
+	outChan 	chan *util.Message
 }
 
 func NewChannelWithConsensus(ep *pb.PeerEndpoint) (*HandlerManager,error){
@@ -42,11 +43,26 @@ func NewChannelWithConsensus(ep *pb.PeerEndpoint) (*HandlerManager,error){
 func NewHandlerManager (selfPoint *pb.PeerEndpoint) (handler *HandlerManager, err error){
 	handler = new(HandlerManager)
 	handler.handlerMap = &chanHandlerMap{m: make(map[pb.PeerID]*ChanHandler)}
+	handler.unHandlerMap = make(map[pb.PeerID]*pb.PeerEndpoint)
 	handler.outChan = make(chan *util.Message,1000)
 	if selfPoint == nil{
 		return nil,fmt.Errorf("self Point is nill")
 	}
 	handler.peerEndpoint = selfPoint
+	go func (){
+		tickChan := time.NewTicker(time.Second * 5).C
+		logger.Infof("Starting Peer reconnection service")
+		for {
+			 <-tickChan
+			logger.Infof("peer %v reconnection map size:%d",selfPoint.ID,len(handler.unHandlerMap))
+			 if len(handler.unHandlerMap) >0 {
+			 	for k,v := range handler.unHandlerMap{
+			 		logger.Infof("peer %v reconnection peer id:%v",selfPoint.ID,k)
+			 		go handler.RegisterNewHandler(v)
+			 	}
+			 }
+		}
+	}()
 	return handler,nil
 }
 
@@ -155,34 +171,40 @@ func (p *HandlerManager) RegisterNewHandler(endpoint *pb.PeerEndpoint){
 }
 
 func (p *HandlerManager) RegisterHandler(messageHandler *ChanHandler) error {
-	key, err := GetPeerIDByHandler(messageHandler)
+	toPeerEndpoint,err := messageHandler.To()
 	if err != nil {
-		return err
+		return fmt.Errorf("Error getting messageHandler PeerEndpoint: %s", err)
 	}
+	key := *toPeerEndpoint.ID
 	p.handlerMap.Lock()
 	defer p.handlerMap.Unlock()
-	if _, ok := p.handlerMap.m[*key]; ok == true {
+	if _, ok := p.handlerMap.m[key]; ok == true {
 		// Duplicate, return error
 		return fmt.Errorf("Error Duplicate Handler from %v to %v",p.peerEndpoint.ID,key ) 
 	}
-	p.handlerMap.m[*key] = messageHandler
+	p.handlerMap.m[key] = messageHandler
+	delete(p.unHandlerMap, key)
+	peerLogger.Errorf("RegisterHandler reconnection map1 size:%d map2 size:%d del:%v",len(p.handlerMap.m),len(p.unHandlerMap),key)
 	peerLogger.Warningf("Registered handler from %v to %v,handler size:%d",p.peerEndpoint.ID,key, len(p.handlerMap.m))
 	return nil
 }
 
 func (p *HandlerManager) DeregisterHandler(messageHandler *ChanHandler) error {
-	key, err := GetPeerIDByHandler(messageHandler)
+	toPeerEndpoint,err := messageHandler.To()
 	if err != nil {
-		return fmt.Errorf("Error deregistering handler: %s", err)
+		return fmt.Errorf("Error getting messageHandler PeerEndpoint: %s", err)
 	}
+	key := *toPeerEndpoint.ID
 	p.handlerMap.Lock()
 	defer p.handlerMap.Unlock()
-	if _, ok := p.handlerMap.m[*key]; !ok {
+	if _, ok := p.handlerMap.m[key]; !ok {
 		// Handler NOT found
 		return fmt.Errorf("Error deregistering handler, could not find handler with key: %s", key)
 	}
 	
-	delete(p.handlerMap.m, *key)
+	delete(p.handlerMap.m, *toPeerEndpoint.ID)
+	p.unHandlerMap[key] = &toPeerEndpoint
+	peerLogger.Errorf("DeregisterHandler reconnection map1 size:%d map2 size:%d add:%v",len(p.handlerMap.m),len(p.unHandlerMap),key)
 	manLogger.Warningf("Deregistered handler from %v to %v,handler size:%d",p.peerEndpoint.ID,key,len(p.handlerMap.m))
 	return nil
 }
@@ -256,14 +278,6 @@ func (p *HandlerManager) Broadcast(msg *pb.Message, typ pb.PeerEndpoint_Type) []
 }
 func (p *HandlerManager) GetSelfPeerEndpoint() *pb.PeerEndpoint{
 	return p.peerEndpoint
-}
-
-func GetPeerIDByHandler(peerMessageHandler *ChanHandler) (*pb.PeerID, error) {
-	peerEndpoint, err := peerMessageHandler.To()
-	if err != nil {
-		return &pb.PeerID{}, fmt.Errorf("Error getting messageHandler key: %s", err)
-	}
-	return peerEndpoint.ID, nil
 }
 
 func (p *HandlerManager) getMessageHandler(receiverHandle *pb.PeerID) (*ChanHandler, error) {
