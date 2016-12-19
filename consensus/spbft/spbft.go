@@ -123,7 +123,7 @@ func getValidatorHandles(ids []uint64) (handles []*pb.PeerID) {
 
 type obcGeneric struct {
 	stack consensus.Stack
-	spbft  *spbftCore
+	spbft *spbftCore
 }
 
 func (op *obcGeneric) skipTo(seqNo uint64, id []byte, replicas []uint64) {

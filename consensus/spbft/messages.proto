@@ -53,6 +53,7 @@ message request {
     bytes payload = 2;  // opaque payload
     uint64 replica_id = 3;
     bytes signature = 4;
+    string txid = 5;
 }
 
 message pre_prepare {

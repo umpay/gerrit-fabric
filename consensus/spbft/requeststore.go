@@ -32,9 +32,16 @@ func (a *orderedRequests) Len() int {
 	return a.order.Len()
 }
 
+// func (a *orderedRequests) wrapRequest(req *Request) requestContainer {
+// 	return requestContainer{
+// 		key: hash(req),
+// 		req: req,
+// 	}
+// }
+
 func (a *orderedRequests) wrapRequest(req *Request) requestContainer {
 	return requestContainer{
-		key: hash(req),
+		key: req.Txid,
 		req: req,
 	}
 }
@@ -44,6 +51,13 @@ func (a *orderedRequests) has(key string) bool {
 	return ok
 }
 
+// func (a *orderedRequests) add(request *Request) {
+// 	rc := a.wrapRequest(request)
+// 	if !a.has(rc.key) {
+// 		e := a.order.PushBack(rc)
+// 		a.presence[rc.key] = e
+// 	}
+// }
 func (a *orderedRequests) add(request *Request) {
 	rc := a.wrapRequest(request)
 	if !a.has(rc.key) {
@@ -58,6 +72,16 @@ func (a *orderedRequests) adds(requests []*Request) {
 	}
 }
 
+// func (a *orderedRequests) remove(request *Request) bool {
+// 	rc := a.wrapRequest(request)
+// 	e, ok := a.presence[rc.key]
+// 	if !ok {
+// 		return false
+// 	}
+// 	a.order.Remove(e)
+// 	delete(a.presence, rc.key)
+// 	return true
+// }
 func (a *orderedRequests) remove(request *Request) bool {
 	rc := a.wrapRequest(request)
 	e, ok := a.presence[rc.key]
@@ -66,6 +90,17 @@ func (a *orderedRequests) remove(request *Request) bool {
 	}
 	a.order.Remove(e)
 	delete(a.presence, rc.key)
+	return true
+}
+
+func (a *orderedRequests) removeTx(txid string) bool {
+	//rc := a.wrapRequest(request)
+	e, ok := a.presence[txid]
+	if !ok {
+		return false
+	}
+	a.order.Remove(e)
+	delete(a.presence, txid)
 	return true
 }
 
@@ -127,6 +162,11 @@ func (rs *requestStore) storePendings(requests []*Request) {
 func (rs *requestStore) remove(request *Request) (outstanding, pending bool) {
 	outstanding = rs.outstandingRequests.remove(request)
 	pending = rs.pendingRequests.remove(request)
+	return
+}
+func (rs *requestStore) removeTx(txid string) (outstanding, pending bool) {
+	outstanding = rs.outstandingRequests.removeTx(txid)
+	pending = rs.pendingRequests.removeTx(txid)
 	return
 }
 
