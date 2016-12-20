@@ -287,7 +287,7 @@ func (p *Impl) GetChannelWithConsensusServer() (*HandlerManager,error){
 	}
 	return nil,fmt.Errorf("Error current peer is not Validator peer")
 }
-
+/*
 func (p *Impl) RegisterHandlerToChannel(messageHandler MessageHandler){
 	peerEndpoint,err := messageHandler.To()
 	if err != nil{
@@ -307,6 +307,23 @@ func (p *Impl) RegisterHandlerToChannel(messageHandler MessageHandler){
 		return
 	}
 	server.RegisterNewHandler(newPoint)
+}
+*/
+
+func (p *Impl) RegisterHandlerToChannel(address string){	
+	if p.isValidator == false {
+		peerLogger.Warning("peer is non-validator peer")
+		return
+	}
+
+	//address  --->vp0:7051 ---->vp0:8055
+	address = fmt.Sprintf("%s:%s",strings.Split(address,":")[0],strings.Split(viper.GetString("peer.consensusAddress"),":")[1])
+	server,err := p.engine.GetChannelWithConsensusServer()
+	if err != nil{
+		peerLogger.Debugf("Service is nill")
+		return
+	}
+	server.RegisterNewHandler(address)
 }
 
 // Chat implementation of the the Chat bidi streaming RPC function
@@ -403,9 +420,6 @@ func getHandlerKeyFromPeerEndpoint(peerEndpoint *pb.PeerEndpoint) *pb.PeerID {
 
 // RegisterHandler register a MessageHandler with this coordinator
 func (p *Impl) RegisterHandler(messageHandler MessageHandler) error {
-        if p.isValidator {
-	   p.RegisterHandlerToChannel(messageHandler) //
-	}
 	key, err := GetHandlerKey(messageHandler)
 	if err != nil {
 		return fmt.Errorf("Error registering handler: %s", err)
@@ -601,6 +615,8 @@ func (p *Impl) chatWithSomePeers(addresses []string) {
 			peerLogger.Errorf("Failed to obtain peer endpoint, %v", err)
 			return
 		}
+		
+	    p.RegisterHandlerToChannel(address) 
 		go p.chatWithPeer(address)
 	}
 }

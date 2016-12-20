@@ -30,16 +30,18 @@ type ChanHandler struct {
 	registered            bool
 	ChatStream            ChatStream 
 	consenterChan 	      chan *util.Message
-	doneChan              chan struct{}  
+	doneChan              chan struct{}  //new
+	initiatedStream       bool // Was the stream initiated within this Peer
 }
 
 
-func NewChanHandler(coord MessageHandlerCoordinatorC, stream ChatStream,point *pb.PeerEndpoint) (*ChanHandler,error) {
+func NewChanHandler(coord MessageHandlerCoordinatorC, stream ChatStream,initiatedStream bool) (*ChanHandler,error) {
 	var err error
 	d := &ChanHandler{
 		ChatStream:      stream,
 		Coordinator:     coord,
 		registered:  	 false,
+		initiatedStream: initiatedStream,
 	}
 	d.consenterChan = make(chan *util.Message, 1000)
 	d.doneChan = make(chan struct{})
@@ -58,11 +60,9 @@ func NewChanHandler(coord MessageHandlerCoordinatorC, stream ChatStream,point *p
 			}
 		}
 	}()
-
-	if point != nil{
-		d.ToPeerEndpoint = point
-		err = d.SendHello()
-		if err != nil{
+	if initiatedStream {
+		logger.Errorf("----send hello to ")
+		if err = d.SendHello(); err != nil{
 			return nil,err
 		}
 	}
@@ -94,26 +94,25 @@ func (d *ChanHandler) HandleMessage(msg *pb.Message) error {
 		if err != nil {
 			return fmt.Errorf("Error unmarshalling HelloMessage: %s", err)
 		}
-		helloPeerEndpoint :=helloMessage.PeerEndpoint
+
+		d.ToPeerEndpoint = helloMessage.PeerEndpoint
 
 		if d.registered == true{
-			logger.Warningf("%v recv msg type %s from %v,registered:%t",selfPoint.ID,pb.Message_DISC_HELLO,d.ToPeerEndpoint.ID,d.registered)
+			logger.Errorf("%v recv msg type %s from %v,registered:%t",selfPoint.ID,pb.Message_DISC_HELLO,d.ToPeerEndpoint.ID,d.registered)
 			return nil
 		}else{
-			d.ToPeerEndpoint = helloPeerEndpoint
-			err = d.SendHello()
-			if err != nil{
+			if err = d.SendHello();err != nil{
 				return err
 			}
 		}
 
 		err = d.Coordinator.RegisterHandler(d)
 		if err != nil{
-			logger.Errorf("Register handler id: %v registered:%t,errror %s", helloPeerEndpoint.ID,d.registered,err)
+			logger.Errorf("Register handler id: %v registered:%t,errror %s", d.ToPeerEndpoint.ID,d.registered,err)
 			return err
 		}else{
 			d.registered = true
-		    logger.Warningf("Register handler id: %v registered:%t ok",helloPeerEndpoint.ID,d.registered)
+		    logger.Warningf("Register handler id: %v registered:%t ok",d.ToPeerEndpoint.ID,d.registered)
 		    go d.start()
 		}
 		return nil
@@ -130,8 +129,8 @@ func (d *ChanHandler) start() {
 	       <-tickChan
 	      if err := d.SendHello(); err != nil {
 	          peerLogger.Errorf("Error sending %s from %v to %v during tick: %s", pb.Message_DISC_HELLO,selfPE.ID,sendPE.ID, err)
-                  peerLogger.Errorf("Stopping send hello Message from %v to %v",selfPE.ID,sendPE.ID)
-                  return
+              peerLogger.Errorf("Stopping send hello Message from %v to %v",selfPE.ID,sendPE.ID)
+              return
 	      }
 	}
 }
@@ -141,7 +140,12 @@ func (d *ChanHandler) SendMessage(msg *pb.Message) error {
 	//instead of calling Send directly on the grpc stream
 	d.chatMutex.Lock()
 	defer d.chatMutex.Unlock()
-	logger.Infof("Sending message to stream of type: %s to:%v", msg.Type,d.ToPeerEndpoint.ID)
+	if d.ToPeerEndpoint == nil{
+		logger.Infof("Sending message to stream of type:%s", msg.Type)
+	}else{
+		logger.Infof("Sending message to stream of type:%s to:%v", msg.Type,d.ToPeerEndpoint.ID)
+	}
+	
 	err := d.ChatStream.Send(msg)
 	if err != nil {
 		return fmt.Errorf("Error Sending message through ChatStream: %s", err)
@@ -176,17 +180,8 @@ func (d *ChanHandler) Stop() error {
 	return nil
 }
 
-
 func (d *ChanHandler) SendHello() error{
-	senderPE, err := d.To()
-	if err != nil{
-		return fmt.Errorf("ToPeerEndpoint is nil")
-	}
-	selfPoint := d.Coordinator.GetSelfPeerEndpoint()
-	if selfPoint == nil{
-		return fmt.Errorf("self Endpoint is nil")
-	}
-	helloMessage := &pb.HelloMessage{PeerEndpoint: selfPoint}
+	helloMessage := &pb.HelloMessage{PeerEndpoint: d.Coordinator.GetSelfPeerEndpoint()}
 	data, err := proto.Marshal(helloMessage)
 	if err != nil {
 		return fmt.Errorf("Error marshalling HelloMessage: %s", err)
@@ -194,10 +189,8 @@ func (d *ChanHandler) SendHello() error{
 	// Need to sign the Discovery Hello message
 	newDiscoveryHelloMsg := &pb.Message{Type: pb.Message_DISC_HELLO, Payload: data, Timestamp: cutil.CreateUtcTimestamp()}
 	//err = p.signMessageMutating(newDiscoveryHelloMsg)
-
 	if err := d.SendMessage(newDiscoveryHelloMsg); err != nil {
-		manLogger.Errorf("%v Send %s to %v,error %s",selfPoint.ID,pb.Message_DISC_HELLO,senderPE.ID,err)
-		return err
+		return fmt.Errorf("Error sending %s during SendHello: %s", pb.Message_DISC_HELLO, err)
 	}
 	return nil
 }

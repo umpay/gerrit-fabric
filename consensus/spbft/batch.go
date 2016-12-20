@@ -434,7 +434,6 @@ func (op *obcBatch) ProcessEvent(event events.Event) events.Event {
 		op.startTimerIfOutstandingRequests()
 		return res
 	case viewChangedEvent:
-		op.batchStore = nil
 		// Outstanding reqs doesn't make sense for batch, as all the requests in a batch may be processed
 		// in a different batch, but PBFT core can't see through the opaque structure to see this
 		// so, on view change, clear it out

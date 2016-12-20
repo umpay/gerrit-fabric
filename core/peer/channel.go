@@ -9,22 +9,23 @@ import (
     "github.com/hyperledger/fabric/consensus/util"
     pb "github.com/hyperledger/fabric/protos"
     "github.com/spf13/viper"
-    "google.golang.org/grpc"
     "golang.org/x/net/context"
+    "google.golang.org/grpc"
     "github.com/op/go-logging"
 )
 var manLogger = logging.MustGetLogger("handlerManager")
 
 type chanHandlerMap struct{
 	sync.RWMutex
-	m map[pb.PeerID]*ChanHandler
+	m  map[pb.PeerID]*ChanHandler 		//connected peers
+	u  map[pb.PeerID]*pb.PeerEndpoint   //Not connected peers
 }
 
+
 type HandlerManager struct {
-	handlerMap      *chanHandlerMap  			 //connected peers
-	unHandlerMap	map[pb.PeerID]*pb.PeerEndpoint   //Not connected peers
-	peerEndpoint    *pb.PeerEndpoint    		//self 
-	outChan 	chan *util.Message
+	handlerMap      *chanHandlerMap  			
+	peerEndpoint    *pb.PeerEndpoint    //self peer info
+	outChan 		chan *util.Message
 }
 
 func NewChannelWithConsensus(ep *pb.PeerEndpoint) (*HandlerManager,error){
@@ -34,7 +35,7 @@ func NewChannelWithConsensus(ep *pb.PeerEndpoint) (*HandlerManager,error){
 	}
     server,err := NewHandlerManager(epoint)
     if err != nil{
-        return nil,fmt.Errorf("failed to create new channel service error: %",err)
+        return nil,fmt.Errorf("failed to create new channel service error: %s",err)
     }
     manLogger.Warningf("create channel with consensus server is success")
     return server,nil
@@ -42,8 +43,7 @@ func NewChannelWithConsensus(ep *pb.PeerEndpoint) (*HandlerManager,error){
 
 func NewHandlerManager (selfPoint *pb.PeerEndpoint) (handler *HandlerManager, err error){
 	handler = new(HandlerManager)
-	handler.handlerMap = &chanHandlerMap{m: make(map[pb.PeerID]*ChanHandler)}
-	handler.unHandlerMap = make(map[pb.PeerID]*pb.PeerEndpoint)
+	handler.handlerMap = &chanHandlerMap{m: make(map[pb.PeerID]*ChanHandler),u:make(map[pb.PeerID]*pb.PeerEndpoint)}
 	handler.outChan = make(chan *util.Message,1000)
 	if selfPoint == nil{
 		return nil,fmt.Errorf("self Point is nill")
@@ -53,14 +53,16 @@ func NewHandlerManager (selfPoint *pb.PeerEndpoint) (handler *HandlerManager, er
 		tickChan := time.NewTicker(time.Second * 5).C
 		logger.Infof("Starting Peer reconnection service")
 		for {
-			 <-tickChan
-			logger.Infof("peer %v reconnection map size:%d",selfPoint.ID,len(handler.unHandlerMap))
-			 if len(handler.unHandlerMap) >0 {
-			 	for k,v := range handler.unHandlerMap{
-			 		logger.Infof("peer %v reconnection peer id:%v",selfPoint.ID,k)
-			 		go handler.RegisterNewHandler(v)
+			 <-tickChan			
+			handler.handlerMap.RLock()
+			logger.Infof("peer %v reconnection,connected size:%d,not connected size:%d",selfPoint.ID,len(handler.handlerMap.m),len(handler.handlerMap.u)) 
+			if len(handler.handlerMap.u) >0 {
+			 	for _,v := range handler.handlerMap.u{
+			 		logger.Infof("peer %v reconnection peer address:%s",selfPoint.ID,v.Address)
+			 		go handler.RegisterNewHandler(v.Address)
 			 	}
-			 }
+			}
+            handler.handlerMap.RUnlock()
 		}
 	}()
 	return handler,nil
@@ -81,47 +83,50 @@ func ChangeAddress(ep *pb.PeerEndpoint) (*pb.PeerEndpoint,error){
 }
 
 func (p *HandlerManager) closeConnect(conn *grpc.ClientConn,address string){
-	manLogger.Errorf("Error drop connection from %v to %s", p.peerEndpoint.ID,address)
+	manLogger.Errorf("Error self drop connection from %v to %s", p.peerEndpoint.ID,address)
 	conn.Close()
 }
 
 //connect a new peer
-func (p *HandlerManager) connectPeer(endpoint *pb.PeerEndpoint) error {
-	manLogger.Infof("Initiating Chat with peer id: %v", endpoint.ID)
-	conn, err := NewPeerClientConnectionWithAddress(endpoint.Address)
+func (p *HandlerManager) connectPeer(address string) error {
+	manLogger.Errorf("Initiating Chat with peer address %s", address)
+	conn, err := NewPeerClientConnectionWithAddress(address)
 	if err != nil {
-		manLogger.Errorf("Error creating connection to peer id:%s: %s", endpoint.ID, err)
+		manLogger.Errorf("Error creating connection to peer address:%s: %s", address, err)
 		return err
 	}
-	defer p.closeConnect(conn,endpoint.Address)
-	manLogger.Warningf("Connection id:%v ok",endpoint.ID)
+	defer p.closeConnect(conn,address)
+	manLogger.Warningf("Connection iaddress:%s ok",address)
 	serverClient := pb.NewPeerClient(conn)  
 	ctx := context.Background()
 	stream, err := serverClient.Chat(ctx)  
 	if err != nil {
-		manLogger.Errorf("Error establishing chat with peer id:%v : %s", endpoint.ID, err)
+		manLogger.Errorf("Error establishing chat with peer address:%s : %s", address, err)
 		return err
 	}
-	manLogger.Warningf("Established Chat with peer id: %v", endpoint.ID)
-	err = p.handleChat(ctx,stream,endpoint)
+    
+	manLogger.Warningf("Established Chat with peer address:%s", address)
+	
+	err = p.handleChat(ctx,stream,true)
 	stream.CloseSend() 
 	if err != nil {
-		manLogger.Errorf("Ending Chat with peer id:%v due to error: %s", endpoint.ID, err)
+		manLogger.Errorf("Ending Chat with peer address:%s due to error: %s", address, err)
 		return err
 	}
 	return nil
 }
 
 // Chat implementation of the the Chat bidi streaming RPC function
-func (p *HandlerManager) handleChat(ctx context.Context, stream ChatStream,endpoint *pb.PeerEndpoint) error {
+func (p *HandlerManager) handleChat(ctx context.Context, stream ChatStream,initiatedStream bool) error {
 	var err error
 	deadline, ok := ctx.Deadline()
 	manLogger.Warningf("Current context deadline = %s, ok = %v", deadline, ok)
-	cHandler,err := NewChanHandler(p,stream,endpoint)
+
+	cHandler,err := NewChanHandler(p,stream,initiatedStream)
 	if err != nil{
-		manLogger.Errorf("Create Handler from %v to %v failed,error %s",p.peerEndpoint.ID,endpoint.ID,err)
-		return err
+		return fmt.Errorf("Error creating handler during handleChat initiation: %s", err)
 	}
+
 	defer cHandler.Stop()
 	for {
 		in, err := stream.Recv() 
@@ -144,29 +149,23 @@ func (p *HandlerManager) handleChat(ctx context.Context, stream ChatStream,endpo
 
 func (p *HandlerManager) Chat(stream pb.Peer_ChatServer) error {
     manLogger.Warningf("chat server running.......")
-    err := p.handleChat(stream.Context(), stream, nil)
+    err := p.handleChat(stream.Context(), stream, false)
     manLogger.Warningf("chat server Stop.......err:%s",err)
     return err
 }
 
 func (p *HandlerManager) GetHandlerByKey(id *pb.PeerID) *ChanHandler{
-	p.handlerMap.Lock()
-	defer p.handlerMap.Unlock()    
+	p.handlerMap.RLock()
+	defer p.handlerMap.RUnlock()    
 	if handler, ok := p.handlerMap.m[*id]; ok == true {
 		return handler
 	}
 	return nil
 }
 
-func (p *HandlerManager) RegisterNewHandler(endpoint *pb.PeerEndpoint){
-	manLogger.Warningf("registered new peer handler with id:%v",endpoint.ID)
-	p.handlerMap.RLock()
-	defer p.handlerMap.RUnlock()
-	if _, ok := p.handlerMap.m[*endpoint.ID]; ok == true {
-		peerLogger.Errorf("Error Duplicate Handler from %v to %v",p.peerEndpoint.ID,endpoint.ID ) 
-	}else{
-		go p.connectPeer(endpoint)
-	}
+func (p *HandlerManager) RegisterNewHandler(address string){
+	manLogger.Warningf("registered new peer handler with address:%s",address)
+	go p.connectPeer(address)
     return
 }
 
@@ -183,8 +182,8 @@ func (p *HandlerManager) RegisterHandler(messageHandler *ChanHandler) error {
 		return fmt.Errorf("Error Duplicate Handler from %v to %v",p.peerEndpoint.ID,key ) 
 	}
 	p.handlerMap.m[key] = messageHandler
-	delete(p.unHandlerMap, key)
-	peerLogger.Errorf("RegisterHandler reconnection map1 size:%d map2 size:%d del:%v",len(p.handlerMap.m),len(p.unHandlerMap),key)
+	delete(p.handlerMap.u, key)
+	peerLogger.Errorf("RegisterHandler reconnection map1-size:%d map2-size:%d del:%v",len(p.handlerMap.m),len(p.handlerMap.u),key)
 	peerLogger.Warningf("Registered handler from %v to %v,handler size:%d",p.peerEndpoint.ID,key, len(p.handlerMap.m))
 	return nil
 }
@@ -203,8 +202,7 @@ func (p *HandlerManager) DeregisterHandler(messageHandler *ChanHandler) error {
 	}
 	
 	delete(p.handlerMap.m, *toPeerEndpoint.ID)
-	p.unHandlerMap[key] = &toPeerEndpoint
-	peerLogger.Errorf("DeregisterHandler reconnection map1 size:%d map2 size:%d add:%v",len(p.handlerMap.m),len(p.unHandlerMap),key)
+	p.handlerMap.u[key] = &toPeerEndpoint
 	manLogger.Warningf("Deregistered handler from %v to %v,handler size:%d",p.peerEndpoint.ID,key,len(p.handlerMap.m))
 	return nil
 }
