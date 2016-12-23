@@ -320,7 +320,7 @@ func (op *obcBatch) resubmitOutstandingReqs() events.Event {
 		//needed := op.batchSize- len(op.batchStore)
 		needed := op.batchSize //
 
-		if op.reqStore.hasNonPending() {
+		for op.reqStore.hasNonPending() {
 			outstanding := op.reqStore.getNextNonPending(needed)
 			op.reqStore.storePendings(outstanding)
 			requestBatch := &RequestBatch{Batch: outstanding}
@@ -470,8 +470,10 @@ func (op *obcBatch) ProcessEvent(event events.Event) events.Event {
 		var req []*Request
 		for _, tx := range et.requests{
 			if op.deduplicator.IsNew(tx) {
-				logger.Infof("node %d add New tx %s", op.pbft.id, tx.Txid)
+				logger.Infof("node %d add New tx %s the primary is %d", op.pbft.id, tx.Txid, op.pbft.primary(op.pbft.view))
 				req = append(req, tx)
+			}else{
+				logger.Infof("node %d add New tx %s for tx is not new, the primary is %d", op.pbft.id, tx.Txid, op.pbft.primary(op.pbft.view))
 			}
 		}  
 		op.reqStore.storeOutstandings(req)
@@ -486,6 +488,9 @@ func (op *obcBatch) ProcessEvent(event events.Event) events.Event {
 			}
 			outstanding := op.reqStore.getNextNonPending(needed)
 			op.reqStore.storePendings(outstanding)
+			for _, tx := range outstanding{
+				logger.Infof("003node %d add Tx %s to batch", op.pbft.id, tx.Txid)
+			}
 			requestBatch := &RequestBatch{Batch: outstanding}
 			return requestBatch
 		}
@@ -521,6 +526,12 @@ func (op *obcBatch) ProcessEvent(event events.Event) events.Event {
 
 		if op.pbft.skipInProgress {
 			// If we're the new primary, but we're in state transfer, we can't trust ourself not to duplicate things
+			logger.Infof("---skipInProgress---node %d skipInProgress begin to clear outstandingRequests, the len is %d", op.pbft.id, op.reqStore.outstandingRequests.Len())
+			for oreqc := op.reqStore.outstandingRequests.order.Front(); oreqc != nil; oreqc = oreqc.Next() {
+				oreq := oreqc.Value.(requestContainer)
+				logger.Infof("001node %d begin to delete %s", op.pbft.id, oreq.key)
+				//oreq.key
+			}
 			op.reqStore.outstandingRequests.empty()
 			logger.Infof("node %d is skipInProgress but we not empty Requests, current view:%d block%d", op.pbft.id, op.pbft.view, op.stack.GetBlockchainSize()-1)
 		}
@@ -553,6 +564,12 @@ func (op *obcBatch) ProcessEvent(event events.Event) events.Event {
 		return op.resubmitOutstandingReqs()
 	case stateUpdatedEvent:
 		// When the state is updated, clear any outstanding requests, they may have been processed while we were gone
+		logger.Infof("---stateUpdatedEvent---node %d stateUpdatedEvent begin to clear outstandingRequests, the len is %d", op.pbft.id, op.reqStore.outstandingRequests.Len())
+		for oreqc := op.reqStore.outstandingRequests.order.Front(); oreqc != nil; oreqc = oreqc.Next() {
+			oreq := oreqc.Value.(requestContainer)
+			logger.Infof("002node %d begin to delete %s", op.pbft.id, oreq.key)
+			//oreq.key
+		}
 		op.reqStore = newRequestStore()
 		// logger.Infof("-----targer is not nil--------")
 		// //targerNumber := et.target.Height - 1
