@@ -172,6 +172,7 @@ type spbftCore struct {
 	viewChangeStore map[vcidx]*ViewChange // track view-change messages
 	newViewStore    map[uint64]*NewView   // track last new-view we received or sent
 	badBlockNumber  uint64
+	primarySendBatch bool
 }
 
 type vReqBatch struct {
@@ -301,6 +302,7 @@ func newSPbftCore(id uint64, config *viper.Viper, consumer innerStack, etf event
 	//instance.pset = make(map[uint64]*ViewChange_PQ)
 	instance.qset = make(map[qidx]*ViewChange_PQ)
 	instance.newViewStore = make(map[uint64]*NewView)
+	instance.primarySendBatch = true
 
 	// initialize state transfer
 	instance.hChkpts = make(map[uint64]uint64)
@@ -336,7 +338,7 @@ func (instance *spbftCore) printInfo(desc string) {
 	} else {
 		primary = instance.primary(instance.view)
 	}
-	logger.Testf("----%s id:%d pri:%d h:%d seqNo:%d view:%d curEx:%d laEx:%d actView:%t timAct:%t---", desc, instance.id, primary, instance.h, instance.seqNo, instance.view, curEx, instance.lastExec, instance.activeView, instance.timerActive)
+	logger.Infof("----%s id:%d pri:%d h:%d seqNo:%d view:%d curEx:%d laEx:%d actView:%t timAct:%t---", desc, instance.id, primary, instance.h, instance.seqNo, instance.view, curEx, instance.lastExec, instance.activeView, instance.timerActive)
 }
 
 func (instance *spbftCore) printReqStore() {
@@ -344,7 +346,7 @@ func (instance *spbftCore) printReqStore() {
 	for k, v := range instance.reqBatchStore {
 		s += fmt.Sprintf("--h:%s v:%d size:%d-\n", k, v.view, len(v.batch.GetBatch()))
 	}
-	logger.Testf(s)
+	logger.Infof(s)
 }
 
 // close tears down resources opened by newspbftCore
@@ -489,7 +491,7 @@ func (instance *spbftCore) inWV(v uint64, n uint64) bool {
 }
 
 func (instance *spbftCore) IsSendBatch() bool {
-	logger.Testf("---IsSendBatch---id:%d v:%d seq:%d vcSeq:%d", instance.id, instance.view, instance.seqNo, instance.viewChangeSeqNo)
+	logger.Infof("---IsSendBatch---id:%d v:%d seq:%d vcSeq:%d", instance.id, instance.view, instance.seqNo, instance.viewChangeSeqNo)
 	return instance.activeView
 	if instance.viewChangePeriod != 0 {
 		return instance.inWV(instance.view, instance.seqNo+1) &&
@@ -679,7 +681,7 @@ func (instance *spbftCore) recvRequestBatch(reqBatch *RequestBatch) error {
 	}
 	if instance.primary(instance.view) == instance.id && instance.activeView {
 		instance.nullRequestTimer.Stop()
-		logger.Testf("---sendPrePrepare pri:%d hash:%s batchSize:%d", instance.id, digest, len(reqBatch.GetBatch()))
+		logger.Infof("---sendPrePrepare pri:%d hash:%s batchSize:%d", instance.id, digest, len(reqBatch.GetBatch()))
 		instance.sendPrePrepare(reqBatch, digest)
 	} else {
 		logger.Debugf("Replica %d is backup, not sending pre-prepare for request batch %s", instance.id, digest)
@@ -736,7 +738,7 @@ func (instance *spbftCore) resubmitRequestBatches() {
 
 	var submissionOrder []*RequestBatch
 	index := 1
-	logger.Testf("resubmitRequestBatches id:%d pri:%d ", instance.id, instance.primary(instance.view))
+	logger.Infof("resubmitRequestBatches id:%d pri:%d ", instance.id, instance.primary(instance.view))
 outer:
 	for d, reqBatch := range instance.outstandingReqBatches {
 		for _, cert := range instance.certStore {
@@ -747,7 +749,7 @@ outer:
 		}
 		logger.Debugf("Replica %d has detected request batch %s must be resubmitted", instance.id, d)
 		submissionOrder = append(submissionOrder, reqBatch)
-		logger.Testf("-----resubmitRequestBatches id:%d resubmit no:%d hash:%s", instance.id, index, d)
+		logger.Infof("-----resubmitRequestBatches id:%d resubmit no:%d hash:%s", instance.id, index, d)
 		index += 1
 	}
 
@@ -779,7 +781,7 @@ func (instance *spbftCore) recvPrePrepare(preprep *PrePrepare) error {
 	}
 
 	if !instance.inWV(preprep.View, preprep.SequenceNumber) {
-		logger.Testf("recvPrePrepare not inmv id:%d recvView:%d seq:%d hash:%d", instance.id, preprep.View, preprep.SequenceNumber, preprep.BatchDigest)
+		logger.Infof("recvPrePrepare not inmv id:%d recvView:%d seq:%d hash:%d", instance.id, preprep.View, preprep.SequenceNumber, preprep.BatchDigest)
 		if preprep.SequenceNumber != instance.h && !instance.skipInProgress {
 			logger.Warningf("Replica %d pre-prepare view different, or sequence number outside watermarks: preprep.View %d, expected.View %d, seqNo %d, low-mark %d", instance.id, preprep.View, instance.primary(instance.view), preprep.SequenceNumber, instance.h)
 		} else {
@@ -1010,7 +1012,7 @@ func (instance *spbftCore) Checkpoint(seqNo uint64, id []byte) {
 	logger.Debugf("Replica %d preparing checkpoint for view=%d/seqNo=%d and b64 id of %s",
 		instance.id, instance.view, seqNo, idAsString)
 
-	logger.Testf("Replica %d preparing checkpoint for view=%d/seqNo=%d and b64 id of %s",
+	logger.Infof("Replica %d preparing checkpoint for view=%d/seqNo=%d and b64 id of %s",
 		instance.id, instance.view, seqNo, idAsString)
 
 	chkpt := &Checkpoint{
@@ -1026,23 +1028,23 @@ func (instance *spbftCore) Checkpoint(seqNo uint64, id []byte) {
 }
 
 func (instance *spbftCore) delReqBatch() {
-	logger.Testf("Replica %d delete not used ReqBatch", instance.id)
+	logger.Infof("Replica %d delete not used ReqBatch", instance.id)
 	var size uint64 = 5
 	var mQset map[string]bool
 	mQset = make(map[string]bool)
 	for k := range instance.qset {
 		mQset[k.d] = true
 	}
-	logger.Testf("----deletex-mQsetx Replica %d size:%d", instance.id, len(mQset))
+	logger.Infof("----deletex-mQsetx Replica %d size:%d", instance.id, len(mQset))
 	for k, v := range instance.reqBatchStore {
 		if instance.view >= size && v.view < instance.view-size {
 			if _, ok := mQset[k]; ok {
-				logger.Testf("----deletex-yes-Replica %d  curV:%d v:%d h:%s", instance.id, instance.view, v.view, k)
+				logger.Infof("----deletex-yes-Replica %d  curV:%d v:%d h:%s", instance.id, instance.view, v.view, k)
 				continue
 			}
 			delete(instance.reqBatchStore, k)
 			instance.persistDelRequestBatch(k)
-			logger.Testf("----deletex-no-Replica %d  curV:%d v:%d h:%s", instance.id, instance.view, v.view, k)
+			logger.Infof("----deletex-no-Replica %d  curV:%d v:%d h:%s", instance.id, instance.view, v.view, k)
 		}
 	}
 }
@@ -1073,7 +1075,7 @@ func (instance *spbftCore) moveWatermarks(n uint64) {
 		if idx.n <= h {
 			logger.Debugf("Replica %d cleaning quorum certificate for view=%d/seqNo=%d",
 				instance.id, idx.v, idx.n)
-			logger.Testf("Replica %d cleaning quorum certificate for view=%d/seqNo=%d",
+			logger.Infof("Replica %d cleaning quorum certificate for view=%d/seqNo=%d",
 				instance.id, idx.v, idx.n)
 
 			instance.persistDelRequestBatch(cert.digest)
@@ -1086,7 +1088,7 @@ func (instance *spbftCore) moveWatermarks(n uint64) {
 		if testChkpt.SequenceNumber <= h {
 			logger.Debugf("Replica %d cleaning checkpoint message from replica %d, seqNo %d, b64 snapshot id %s",
 				instance.id, testChkpt.ReplicaId, testChkpt.SequenceNumber, testChkpt.Id)
-			logger.Testf("Replica %d cleaning checkpoint message from replica %d, seqNo %d, b64 snapshot id %s",
+			logger.Infof("Replica %d cleaning checkpoint message from replica %d, seqNo %d, b64 snapshot id %s",
 				instance.id, testChkpt.ReplicaId, testChkpt.SequenceNumber, testChkpt.Id)
 			delete(instance.checkpointStore, testChkpt)
 		}
@@ -1114,7 +1116,7 @@ func (instance *spbftCore) moveWatermarks(n uint64) {
 
 	instance.h = h
 
-	logger.Testf("Replica %d updated low watermark to %d",
+	logger.Infof("Replica %d updated low watermark to %d",
 		instance.id, instance.h)
 
 	instance.resubmitRequestBatches()
@@ -1186,7 +1188,7 @@ func (instance *spbftCore) witnessCheckpointWeakCert(chkpt *Checkpoint) {
 		logger.Error(err.Error())
 		return
 	}
-	logger.Testf("witnessCheckpointWeakCert stateUpdateTarget id:%d  curSeq:%d updateSeq:%d skipInProgress:%t", instance.id, instance.seqNo, chkpt.SequenceNumber, instance.skipInProgress)
+	logger.Infof("witnessCheckpointWeakCert stateUpdateTarget id:%d  curSeq:%d updateSeq:%d skipInProgress:%t", instance.id, instance.seqNo, chkpt.SequenceNumber, instance.skipInProgress)
 	target := &stateUpdateTarget{
 		checkpointMessage: checkpointMessage{
 			seqNo: chkpt.SequenceNumber,
@@ -1209,7 +1211,7 @@ func (instance *spbftCore) recvCheckpoint(chkpt *Checkpoint) events.Event {
 		instance.id, chkpt.ReplicaId, chkpt.SequenceNumber, chkpt.Id)
 
 	if instance.weakCheckpointSetOutOfRange(chkpt) {
-		logger.Testf("---weakCheckpointSetOutOfRange---Replica %d ---h:%d---seqno:%d  from replica %d, seqNo %d, digest %s",
+		logger.Infof("---weakCheckpointSetOutOfRange---Replica %d ---h:%d---seqno:%d  from replica %d, seqNo %d, digest %s",
 			instance.id, instance.h, instance.seqNo, chkpt.ReplicaId, chkpt.SequenceNumber, chkpt.Id)
 		return nil
 	}
@@ -1221,12 +1223,12 @@ func (instance *spbftCore) recvCheckpoint(chkpt *Checkpoint) events.Event {
 		} else {
 			logger.Debugf("Checkpoint sequence number outside watermarks: seqNo %d, low-mark %d", chkpt.SequenceNumber, instance.h)
 		}
-		logger.Testf("---inW---Replica %d ---h:%d---seqno:%d  from replica %d, seqNo %d, digest %s",
+		logger.Infof("---inW---Replica %d ---h:%d---seqno:%d  from replica %d, seqNo %d, digest %s",
 			instance.id, instance.h, instance.seqNo, chkpt.ReplicaId, chkpt.SequenceNumber, chkpt.Id)
 
 		return nil
 	}
-	logger.Testf("recvCheckpoint id:%d chkptseq:%d h:%d skipInProgress:%t", instance.id, chkpt.SequenceNumber, instance.h, instance.skipInProgress)
+	logger.Infof("recvCheckpoint id:%d chkptseq:%d h:%d skipInProgress:%t", instance.id, chkpt.SequenceNumber, instance.h, instance.skipInProgress)
 	instance.checkpointStore[*chkpt] = true
 
 	matching := 0
@@ -1257,7 +1259,7 @@ func (instance *spbftCore) recvCheckpoint(chkpt *Checkpoint) events.Event {
 	// Note, this is not divergent from the paper, as the paper requires that
 	// the quorum certificate must contain 2f+1 messages, including its own
 	chkptID, ok := instance.chkpts[chkpt.SequenceNumber]
-	logger.Testf("Replica %d find checkpoint is %d ,the matching is %d", instance.id, ok, matching)
+	logger.Infof("Replica %d find checkpoint is %d ,the matching is %d", instance.id, ok, matching)
 	if !ok {
 		logger.Debugf("Replica %d found checkpoint quorum for seqNo %d, digest %s, but it has not reached this checkpoint itself yet",
 			instance.id, chkpt.SequenceNumber, chkpt.Id)
@@ -1275,7 +1277,7 @@ func (instance *spbftCore) recvCheckpoint(chkpt *Checkpoint) events.Event {
 
 	logger.Debugf("Replica %d found checkpoint quorum for seqNo %d, digest %s",
 		instance.id, chkpt.SequenceNumber, chkpt.Id)
-	logger.Testf("Replica %d found checkpoint quorum for seqNo %d, digest %s",
+	logger.Infof("Replica %d found checkpoint quorum for seqNo %d, digest %s",
 		instance.id, chkpt.SequenceNumber, chkpt.Id)
 
 	if chkptID != chkpt.Id {

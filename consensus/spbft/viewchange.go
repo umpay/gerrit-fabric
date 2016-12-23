@@ -26,19 +26,9 @@ import (
 
 // viewChangeQuorumEvent is returned to the event loop when a new ViewChange message is received which is part of a quorum cert
 type viewChangeQuorumEvent struct{}
-// var once sync.Once
-// func (instance *spbftCore) a() {
-// 	instance.view = instance.view + instance.id * 2
-// 	logger.Infof("Replica %d update view to %d", instance.id, instance.view)
-// }
+
 func (instance *spbftCore) correctViewChange(vc *ViewChange) bool {
-	// for _, p := range append(vc.Pset, vc.Qset...) {
-	// 	if !(p.View < vc.View && p.SequenceNumber > vc.H && p.SequenceNumber <= vc.H+instance.L) {
-	// 		logger.Debugf("Replica %d invalid p entry in view-change: vc(v:%d h:%d) p(v:%d n:%d)",
-	// 			instance.id, vc.View, vc.H, p.View, p.SequenceNumber)
-	// 		return false
-	// 	}
-	// }
+	
 
 	for _, q := range vc.Qset {
 		if !(q.View < vc.View && q.SequenceNumber > vc.H && q.SequenceNumber <= vc.H+instance.L) {
@@ -63,41 +53,6 @@ func (instance *spbftCore) correctViewChange(vc *ViewChange) bool {
 	return true
 }
 
-// func (instance *pbftCore) calcPSet() map[uint64]*ViewChange_PQ {
-// 	pset := make(map[uint64]*ViewChange_PQ)
-
-// 	for n, p := range instance.pset {
-// 		pset[n] = p
-// 	}
-
-// 	// P set: requests that have prepared here
-// 	//
-// 	// "<n,d,v> has a prepared certificate, and no request
-// 	// prepared in a later view with the same number"
-
-// 	for idx, cert := range instance.certStore {
-// 		if cert.prePrepare == nil {
-// 			continue
-// 		}
-
-// 		digest := cert.digest
-// 		if !instance.prepared(digest, idx.v, idx.n) {
-// 			continue
-// 		}
-
-// 		if p, ok := pset[idx.n]; ok && p.View > idx.v {
-// 			continue
-// 		}
-
-// 		pset[idx.n] = &ViewChange_PQ{
-// 			SequenceNumber: idx.n,
-// 			BatchDigest:    digest,
-// 			View:           idx.v,
-// 		}
-// 	}
-
-// 	return pset
-// }
 
 func (instance *spbftCore) calcQSet() map[qidx]*ViewChange_PQ {
 	qset := make(map[qidx]*ViewChange_PQ)
@@ -143,6 +98,7 @@ func (instance *spbftCore) sendViewChange() events.Event {
 	delete(instance.newViewStore, instance.view)
 	instance.view++
 	instance.activeView = false
+	instance.primarySendBatch = false
 
 	//instance.pset = instance.calcPSet()
 	instance.qset = instance.calcQSet()
@@ -203,21 +159,15 @@ func (instance *spbftCore) sendViewChange() events.Event {
 }
 
 func (instance *spbftCore) recvViewChange(vc *ViewChange) events.Event {
-	// logger.Infof("Replica %d received view-change from replica %d, v:%d, h:%d, |C|:%d, |P|:%d, |Q|:%d",
-	// 	instance.id, vc.ReplicaId, vc.View, vc.H, len(vc.Cset), len(vc.Pset), len(vc.Qset))
+	
 
 	logger.Infof("Replica %d received view-change from replica %d, v:%d, h:%d, |C|:%d, |Q|:%d",
 		instance.id, vc.ReplicaId, vc.View, vc.H, len(vc.Cset), len(vc.Qset))
 	maxExec := instance.lastExec
    	if instance.currentExec != nil {
     	maxExec = *instance.currentExec
-        //logger.Infof("Replica %d update maxExec to %d", instance.id, maxExec)
     }
- //    if vc.H < instance.h {
- //    	logger.Warningf("Replica %d found vc watermarks is low for sender: %d, begin to sendViewChange", instance.id, vc.ReplicaId)
-	// 	instance.sendViewChange()
-	// }
-
+ 
 	if err := instance.verify(vc); err != nil {
 		logger.Warningf("Replica %d found incorrect signature in view-change message: %s  for sender: %d", instance.id, err, vc.ReplicaId)
 		return nil
@@ -235,15 +185,7 @@ func (instance *spbftCore) recvViewChange(vc *ViewChange) events.Event {
 
 	if _, ok := instance.viewChangeStore[vcidx{vc.View, vc.ReplicaId}]; ok {
 		logger.Warningf("Replica %d already has a view change message for view %d from replica %d", instance.id, vc.View, vc.ReplicaId)
-		//if instance.viewChangeSeqNo % 10 == 1{
-	    	//logger.Infof("Replica %d  updated instance.viewChangeSeqNo to %d", instance.id, instance.viewChangeSeqNo)
-	    	//return nil
-	   	//}
-		// maxExec := instance.lastExec
-	 //   	if instance.currentExec != nil {
-	 //    	maxExec = *instance.currentExec
-	 //        logger.Infof("Replica %d update maxExec to %d", instance.id, maxExec)
-	 //    }
+		
 	    instance.viewChangeSeqNo = maxExec/10*10 + 10
 		return nil
 	}
@@ -532,12 +474,6 @@ func (instance *spbftCore) processNewView2(nv *NewView, cp ViewChange_C) events.
 
 	instance.activeView = true
 	delete(instance.newViewStore, instance.view-1)
-
-	// _, ok := instance.chkpts[cp.SequenceNumber]
-	// if !ok {
-		
-		
-	// }
 	if len(instance.chkpts) == 0 {
 			instance.chkpts[cp.SequenceNumber] = cp.Id
 			logger.Infof("Replica %d adding instance.chkpts for %d", instance.id, cp.SequenceNumber)
@@ -552,13 +488,7 @@ func (instance *spbftCore) processNewView2(nv *NewView, cp ViewChange_C) events.
 	}
 
 	instance.seqNo = instance.h
-	// for n, _ := range nv.Xset {
-	// 	if n > instance.seqNo {
-	// 		instance.seqNo = n
-	// 	}
-	// }
-	// instance.updateViewChangeSeqNo()	
-	//logger.Infof("Replica %d successed update ViewChangeSeqNo", instance.id)
+	
 	for n, d := range nv.Xset {
 		if n <= instance.h {
 			continue
@@ -585,30 +515,10 @@ func (instance *spbftCore) processNewView2(nv *NewView, cp ViewChange_C) events.
 	}
 
 	instance.updateViewChangeSeqNo()
+	//instance.primarySendBatch = true
 	logger.Infof("Replica %d successed update ViewChangeSeqNo", instance.id)
 
-	// if instance.primary(instance.view) != instance.id {
-	// 	for n, d := range nv.Xset {
-	// 		commit := &Commit{
-	// 			View:           instance.view,
-	// 			SequenceNumber: n,
-	// 			BatchDigest:    d,
-	// 			ReplicaId:      instance.id,
-	// 		}
-	// 		// cert.sentCommit = true
-	// 		// instance.recvCommit(commit)
-	// 		// return instance.innerBroadcast(&Message{&Message_Commit{commit}})
-	// 		if n > instance.h {
-	// 			cert := instance.getCert(instance.view, n)
-	// 			cert.sentCommit = true
-	// 			instance.recvCommit(commit)
-	// 		}
-	// 		instance.innerBroadcast(&Message{&Message_Commit{commit}})
-	// 	}
-	// } else {
-	// 	logger.Debugf("Replica %d is now primary, attempting to resubmit requests", instance.id)
-	// 	instance.resubmitRequestBatches()
-	// }
+	
 	for n, d := range nv.Xset {
 		commit := &Commit{
 			View:           instance.view,
@@ -616,9 +526,6 @@ func (instance *spbftCore) processNewView2(nv *NewView, cp ViewChange_C) events.
 			BatchDigest:    d,
 			ReplicaId:      instance.id,
 		}
-		// cert.sentCommit = true
-		// instance.recvCommit(commit)
-		// return instance.innerBroadcast(&Message{&Message_Commit{commit}})
 		if n > instance.h {
 			cert := instance.getCert(instance.view, n)
 			cert.sentCommit = true
@@ -626,16 +533,17 @@ func (instance *spbftCore) processNewView2(nv *NewView, cp ViewChange_C) events.
 		}
 		instance.innerBroadcast(&Message{&Message_Commit{commit}})
 	}
+	
+	//instance.primarySendBatch = true
 	if instance.primary(instance.view) == instance.id {
 		logger.Debugf("Replica %d is now primary, attempting to resubmit requests", instance.id)
 		instance.resubmitRequestBatches()
 	}
 
-	//instance.startTimerIfOutstandingRequests()
+	instance.startTimerIfOutstandingRequests()
 
 	logger.Debugf("Replica %d done cleaning view change artifacts, calling into consumer", instance.id)
 	instance.delReqBatch()
-	// once.Do(instance.a)
 	return viewChangedEvent{}
 }
 
@@ -708,94 +616,6 @@ func (instance *spbftCore) selectInitialCheckpoint(vset []*ViewChange) (checkpoi
 	return
 }
 
-// func (instance *pbftCore) assignSequenceNumbers(vset []*ViewChange, h uint64) (msgList map[uint64]string) {
-// 	msgList = make(map[uint64]string)
-
-// 	maxN := h + 1
-
-// 	// "for all n such that h < n <= h + L"
-// nLoop:
-// 	for n := h + 1; n <= h+instance.L; n++ {
-// 		// "∃m ∈ S..."
-// 		for _, m := range vset {
-// 			// "...with <n,d,v> ∈ m.P"
-// 			for _, em := range m.Pset {
-// 				quorum := 0
-// 				// "A1. ∃2f+1 messages m' ∈ S"
-// 			mpLoop:
-// 				for _, mp := range vset {
-// 					if mp.H >= n {
-// 						continue
-// 					}
-// 					// "∀<n,d',v'> ∈ m'.P"
-// 					for _, emp := range mp.Pset {
-// 						if n == emp.SequenceNumber && !(emp.View < em.View || (emp.View == em.View && emp.BatchDigest == em.BatchDigest)) {
-// 							continue mpLoop
-// 						}
-// 					}
-// 					quorum++
-// 				}
-
-// 				if quorum < instance.intersectionQuorum() {
-// 					continue
-// 				}
-
-// 				quorum = 0
-// 				// "A2. ∃f+1 messages m' ∈ S"
-// 				for _, mp := range vset {
-// 					// "∃<n,d',v'> ∈ m'.Q"
-// 					for _, emp := range mp.Qset {
-// 						if n == emp.SequenceNumber && emp.View >= em.View && emp.BatchDigest == em.BatchDigest {
-// 							quorum++
-// 						}
-// 					}
-// 				}
-
-// 				if quorum < instance.f+1 {
-// 					continue
-// 				}
-
-// 				// "then select the request with digest d for number n"
-// 				msgList[n] = em.BatchDigest
-// 				maxN = n
-
-// 				continue nLoop
-// 			}
-// 		}
-
-// 		quorum := 0
-// 		// "else if ∃2f+1 messages m ∈ S"
-// 	nullLoop:
-// 		for _, m := range vset {
-// 			// "m.P has no entry"
-// 			for _, em := range m.Pset {
-// 				if em.SequenceNumber == n {
-// 					continue nullLoop
-// 				}
-// 			}
-// 			quorum++
-// 		}
-
-// 		if quorum >= instance.intersectionQuorum() {
-// 			// "then select the null request for number n"
-// 			msgList[n] = ""
-
-// 			continue nLoop
-// 		}
-
-// 		logger.Warningf("Replica %d could not assign value to contents of seqNo %d, found only %d missing P entries", instance.id, n, quorum)
-// 		return nil
-// 	}
-
-// 	// prune top null requests
-// 	for n, msg := range msgList {
-// 		if n > maxN && msg == "" {
-// 			delete(msgList, n)
-// 		}
-// 	}
-
-// 	return
-// }
 
 func (instance *spbftCore) assignSequenceNumbers(vset []*ViewChange, h uint64) (msgList map[uint64]string) {
 	msgList = make(map[uint64]string)
@@ -812,28 +632,7 @@ nLoop:
 			//遍历每一个ViewChange中的Qset
 			for _, em := range m.Qset {
 				quorum := 0
-				// "A1. ∃2f+1 messages m' ∈ S"
-				// 存在2f+1个消息
-				// mpLoop:
-				// 	for _, mp := range vset {
-				// 		if mp.H >= n {
-				// 			continue
-				// 		}
-				// 		// "∀<n,d',v'> ∈ m'.P"
-				// 		// 所有
-				// 		for _, emp := range mp.Pset {
-				// 			if n == emp.SequenceNumber && !(emp.View < em.View || (emp.View == em.View && emp.BatchDigest == em.BatchDigest)) {
-				// 				continue mpLoop
-				// 			}
-				// 		}
-				// 		quorum++
-				// 	}
-
-				// 	if quorum < instance.intersectionQuorum() {
-				// 		continue
-				// 	}
-
-				// 	quorum = 0
+				
 				// "A2. ∃f+1 messages m' ∈ S"
 				for _, mp := range vset {
 					// "∃<n,d',v'> ∈ m'.Q"
